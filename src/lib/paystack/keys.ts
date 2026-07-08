@@ -26,11 +26,11 @@ export interface PaystackCredentials {
 export async function getPaystackKeys(): Promise<PaystackCredentials | null> {
   try {
     const adminClient = createAdminClient();
-    const { data, error } = await adminClient
+    const { data, error } = await (adminClient
       .from("platform_settings")
       .select("value")
       .eq("key", "paystack_keys")
-      .single();
+      .single() as never) as unknown as { data: { value: unknown } | null; error: { code?: string } | null };
 
     if (error || !data?.value) {
       if (error && error.code !== "PGRST116") {
