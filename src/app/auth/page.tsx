@@ -12,6 +12,8 @@ import { createClient } from "@/lib/supabase/client";
 import { Turnstile } from "@/components/ui/Turnstile";
 import { useAuth } from "@/hooks/useAuth";
 
+export const dynamic = "force-dynamic";
+
 type AuthRole = "buyer" | "vendor";
 type AuthView = "select" | "login" | "signup";
 
@@ -32,13 +34,11 @@ function AuthForm() {
   const isAdminSetup = searchParams.get("admin_setup") === "true";
   const referralCode = searchParams.get("ref") || undefined;
 
-  // Persist referral code in a ref so it survives component re-renders
   const [activeReferral, setActiveReferral] = useState<string | undefined>(referralCode);
 
   const [role, setRole] = useState<AuthRole>(defaultRole);
   const [view, setView] = useState<AuthView>(isAdminSetup ? "signup" : "select");
 
-  // Form fields
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
@@ -46,7 +46,6 @@ function AuthForm() {
   const [otp, setOtp] = useState("");
   const [showPassword, setShowPassword] = useState(false);
 
-  // State
   const [loading, setLoading] = useState(false);
   const [showOTP, setShowOTP] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -55,13 +54,11 @@ function AuthForm() {
   const supabaseRef = useRef(createClient());
   const supabase = supabaseRef.current;
 
-  // Admin allowlist detection
   const [detectedAdmin, setDetectedAdmin] = useState<{
     identifier: string;
     claimed: boolean;
   } | null>(null);
 
-  // Check for admin allowlist on email change (via server API route)
   const checkAllowlistForEmail = async (emailValue: string) => {
     if (!emailValue || !emailValue.includes("@")) return;
     const result = await checkAdminAllowlist(emailValue);
@@ -115,12 +112,10 @@ function AuthForm() {
     setLoading(true);
 
     try {
-      // Validate CAPTCHA if configured
       if (process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY && !captchaToken) {
         throw new Error("Please complete the security check");
       }
 
-      // Verify CAPTCHA on server
       if (captchaToken) {
         const captchaRes = await fetch("/api/verify-captcha", {
           method: "POST",
@@ -133,12 +128,9 @@ function AuthForm() {
         }
       }
 
-      // Check if identifier is in admin allowlist (unclaimed) via server API
       const allowlistCheck = await checkAdminAllowlist(email);
 
       if (allowlistCheck.detected && !allowlistCheck.claimed) {
-        // This is an admin account setup flow (Section 3.1)
-        // The FIRST step: OTP verification of ownership
         setSuccess(
           "Admin identifier detected. Sending verification code to your email..."
         );
@@ -156,7 +148,6 @@ function AuthForm() {
         return;
       }
 
-      // Normal user signup
       const result = await signUpWithEmail(email, password, role, activeReferral);
       if (result.isAdminSetup) {
         setSuccess("Admin account setup initiated...");
@@ -176,7 +167,6 @@ function AuthForm() {
     setLoading(true);
 
     try {
-      // Verify the OTP for admin setup
       const { data, error: verifyError } = await supabase.auth.verifyOtp({
         email,
         token: otp,
@@ -186,7 +176,6 @@ function AuthForm() {
       if (verifyError) throw verifyError;
 
       if (data.user) {
-        // Complete admin setup via server-side API (bypasses RLS)
         const response = await fetch("/api/auth/admin-setup", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -247,10 +236,8 @@ function AuthForm() {
 
   return (
     <div className="min-h-screen flex">
-      {/* Left: Form */}
       <div className="flex-1 flex items-center justify-center px-4 sm:px-6 lg:px-8">
         <div className="w-full max-w-md">
-          {/* Logo */}
           <Link href="/" className="flex items-center gap-3 mb-8">
             <Image
               src="/brand/logo-flat.png"
@@ -264,14 +251,12 @@ function AuthForm() {
             </span>
           </Link>
 
-          {/* Error Message */}
           {error && (
             <div className="mb-6 p-4 rounded-xl bg-accent-error/5 border border-accent-error/20 text-accent-error text-sm">
               {error}
             </div>
           )}
 
-          {/* Success Message */}
           {success && (
             <div className="mb-6 p-4 rounded-xl bg-accent-success/5 border border-accent-success/20 text-accent-success text-sm flex items-center gap-2">
               <Check className="h-4 w-4 shrink-0" />
@@ -289,7 +274,6 @@ function AuthForm() {
               </p>
 
               <div className="space-y-4">
-                {/* Vendor Option */}
                 <button
                   onClick={() => {
                     setRole("vendor");
@@ -312,7 +296,6 @@ function AuthForm() {
                   </div>
                 </button>
 
-                {/* Buyer Option */}
                 <button
                   onClick={() => {
                     setRole("buyer");
@@ -386,7 +369,6 @@ function AuthForm() {
                   </p>
                 </div>
 
-                {/* Admin badge - only shown when admin is detected */}
                 {detectedAdmin && (
                   <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-brand-navy/5 text-brand-navy text-xs font-semibold">
                     <Lock className="h-3 w-3" />
@@ -395,7 +377,6 @@ function AuthForm() {
                 )}
               </div>
 
-              {/* Login/Signup Toggle */}
               <div className="flex mb-6 bg-gray-100 rounded-xl p-1">
                 <button
                   onClick={() => {
@@ -429,7 +410,6 @@ function AuthForm() {
                 </button>
               </div>
 
-              {/* Google Login */}
               <Button
                 variant="outline"
                 size="lg"
@@ -467,7 +447,6 @@ function AuthForm() {
                 </div>
               </div>
 
-              {/* Sign Up Form */}
               {view === "signup" && !showOTP && (
                 <form onSubmit={handleSignUp} className="space-y-4">
                   {detectedAdmin && !detectedAdmin.claimed && (
@@ -557,7 +536,6 @@ function AuthForm() {
                 </form>
               )}
 
-              {/* Email/Password Login */}
               {view === "login" && !showOTP && (
                 <form onSubmit={handleEmailLogin} className="space-y-4">
                   <div>
@@ -604,7 +582,6 @@ function AuthForm() {
                 </form>
               )}
 
-              {/* Vendor Phone OTP Login */}
               {role === "vendor" && view === "login" && !showOTP && (
                 <>
                   <div className="relative my-6">
@@ -644,7 +621,6 @@ function AuthForm() {
                 </>
               )}
 
-              {/* OTP Verification */}
               {showOTP && (
                 <form
                   onSubmit={detectedAdmin ? handleAdminOTPVerify : handleOTPVerify}
@@ -702,7 +678,6 @@ function AuthForm() {
                 </form>
               )}
 
-              {/* Bottom text */}
               {!showOTP && (
                 <p className="mt-6 text-center text-sm text-gray-500">
                   {view === "login" ? (
@@ -741,7 +716,6 @@ function AuthForm() {
         </div>
       </div>
 
-      {/* Right: Brand Panel */}
       <div className="hidden lg:flex flex-1 bg-gradient-to-br from-brand-navy via-brand-navy-dark to-[#041c3d] items-center justify-center p-12">
         <div className="text-center max-w-md">
           <Image
