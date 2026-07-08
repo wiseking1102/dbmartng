@@ -1,0 +1,110 @@
+@import "tailwindcss";
+
+/* ─── Brand Design Tokens ─── */
+@theme {
+  --color-brand-navy: #0B3C7B;
+  --color-brand-navy-light: #1a4d8a;
+  --color-brand-navy-dark: #072a5a;
+  --color-brand-gold: #C9B037;
+  --color-brand-gold-light: #d4c04d;
+  --color-brand-gold-dark: #a8942e;
+  --color-brand-rosegold: #b76e79;
+  --color-brand-slate: #64748b;
+  --color-brand-slate-light: #94a3b8;
+  --color-brand-slate-dark: #475569;
+  --color-brand-marble: #f5f0eb;
+  --color-surface: #ffffff;
+  --color-surface-secondary: #f8fafc;
+  --color-surface-muted: #f1f5f9;
+  --color-accent-success: #10b981;
+  --color-accent-warning: #f59e0b;
+  --color-accent-error: #ef4444;
+  --color-accent-info: #3b82f6;
+  --font-sans: "Inter", "Manrope", system-ui, -apple-system, sans-serif;
+  --font-display: "Manrope", system-ui, -apple-system, sans-serif;
+
+  /* Brand-specific animations */
+  --animate-fade-in: fade-in 0.5s ease-out;
+  --animate-slide-up: slide-up 0.5s ease-out;
+  --animate-slide-down: slide-down 0.3s ease-out;
+  --animate-scale-in: scale-in 0.2s ease-out;
+  --animate-spin-slow: spin 3s linear infinite;
+  --animate-float: float 3s ease-in-out infinite;
+  --animate-pulse-soft: pulse-soft 2s ease-in-out infinite;
+  --animate-confetti: confetti 1s ease-out forwards;
+
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes slide-up {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes slide-down {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes scale-in {
+    from { opacity: 0; transform: scale(0.95); }
+    to { opacity: 1; transform: scale(1); }
+  }
+  @keyframes float {
+    0%, 100% { transform: translateY(0px); }
+    50% { transform: translateY(-10px); }
+  }
+  @keyframes pulse-soft {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+  }
+  @keyframes confetti {
+    0% { transform: scale(0) rotate(0deg); opacity: 1; }
+    100% { transform: scale(1.5) rotate(360deg); opacity: 0; }
+  }
+}
+
+/* ─── Base Styles ─── */
+@layer base {
+  html {
+    /* scroll-behavior is handled by Lenis for smooth scroll */
+  }
+  body {
+    @apply bg-surface text-gray-900 antialiased;
+    font-family: var(--font-sans);
+  }
+
+  /* Glassmorphism base style */
+  .glass {
+    @apply bg-white/70 backdrop-blur-xl border border-white/20 shadow-lg;
+  }
+  .glass-strong {
+    @apply bg-white/85 backdrop-blur-2xl border border-white/30 shadow-xl;
+  }
+
+  /* Gradient text for hero headings */
+  .gradient-text {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(135deg, #0B3C7B, #C9B037);
+  }
+
+  /* Navigation link underline animation */
+  .nav-link {
+    @apply relative after:absolute after:bottom-0 after:left-0 after:h-0.5 after:w-0 after:bg-brand-gold after:transition-all after:duration-300 hover:after:w-full;
+  }
+}
+
+/* ─── Staggered Entrance ─── */
+.stagger-entrance > * {
+  opacity: 0;
+}
+
+/* ─── Scrollbar ─── */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-brand-slate/30 rounded-full hover:bg-brand-slate/50;
+}

@@ -1,0 +1,24 @@
+name: Supabase Keep-Alive
+
+on:
+  schedule:
+    # Every 3 days at 08:00 UTC — keeps free-tier Supabase from hibernating
+    - cron: "0 8 */3 * *"
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping supabase to prevent auto-pause
+        run: |
+          curl -s -X GET "${{ secrets.SUPABASE_URL }}/rest/v1/platform_settings?select=id&limit=1" \
+            -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
+            --max-time 10
+        continue-on-error: true
+
+      - name: Ping production app to warm ISR cache
+        run: |
+          curl -s -X GET "https://dbmart.ng" --max-time 10
+        continue-on-error: true

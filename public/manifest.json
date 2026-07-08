@@ -1,0 +1,23 @@
+{
+  "name": "DBMartNG — Discover & Connect with Nigerian Businesses",
+  "short_name": "DBMartNG",
+  "description": "Nigeria's premier business directory and marketplace. Discover verified vendors and connect directly.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0B3C7B",
+  "icons": [
+    {
+      "src": "/brand/logo-flat.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/brand/logo-flat.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

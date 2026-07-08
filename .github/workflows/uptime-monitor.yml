@@ -1,0 +1,30 @@
+name: Uptime Monitor
+
+on:
+  schedule:
+    # Every 30 minutes
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check homepage
+        id: homepage
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://dbmart.ng" --max-time 10)
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+
+      - name: Check browse page
+        id: browse
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://dbmart.ng/browse" --max-time 10)
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+
+      - name: Alert on 5xx
+        if: steps.homepage.outputs.status >= 500 || steps.browse.outputs.status >= 500
+        run: |
+          echo "::error::⚠️ DBMartNG uptime alert — 5xx detected"
+          echo "::error::Homepage: ${{ steps.homepage.outputs.status }}"
+          echo "::error::Browse page: ${{ steps.browse.outputs.status }}"

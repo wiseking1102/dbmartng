@@ -1,0 +1,57 @@
+name: Database Backup
+
+on:
+  schedule:
+    # Daily at 02:00 UTC
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+env:
+  AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+  AWS_ENDPOINT_URL_S3: ${{ secrets.R2_ENDPOINT }}
+  AWS_DEFAULT_REGION: auto
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install AWS CLI
+        run: |
+          curl -sL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip
+          unzip -q awscliv2.zip
+          sudo ./aws/install
+          aws --version
+
+      - name: Run pg_dump
+        run: |
+          pg_dump \
+            --dbname="${{ secrets.SUPABASE_DATABASE_URL }}" \
+            --format=custom \
+            --file=dbmartng_backup.dump \
+            --no-owner \
+            --no-acl \
+            --verbose
+
+      - name: Upload to Cloudflare R2
+        run: |
+          FILENAME="dbmartng_$(date +%Y-%m-%d_%H-%M-%S).dump"
+          aws s3 cp dbmartng_backup.dump \
+            "s3://${{ secrets.R2_BACKUP_BUCKET }}/backups/${FILENAME}" \
+            --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+          echo "Backup uploaded: ${FILENAME}"
+
+          # Keep only last 30 backups
+          aws s3 ls "s3://${{ secrets.R2_BACKUP_BUCKET }}/backups/" \
+            --endpoint-url "${{ secrets.R2_ENDPOINT }}" | sort -r | tail -n +31 | awk '{print $4}' | while read -r old; do
+            aws s3 rm "s3://${{ secrets.R2_BACKUP_BUCKET }}/backups/${old}" \
+              --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+          done
+
+      - name: Backup Size
+        run: ls -lh dbmartng_backup.dump
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "::warning::Database backup failed — check logs and run manually via workflow_dispatch"
