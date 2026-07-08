@@ -10,10 +10,7 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "db:migrate": "supabase db push",
-    "db:types": "supabase gen types typescript --linked > src/types/database.ts",
-    "vercel:link": "vercel link --yes",
-    "vercel:deploy": "vercel deploy --prod --yes",
-    "deploy": "npm run build && npm run vercel:deploy"
+    "db:types": "supabase gen types typescript --linked > src/types/database.ts"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.0",
@@ -44,7 +41,7 @@
     "react-dom": "^19.0.0",
     "react-hook-form": "^7.54.0",
     "react-qr-code": "^2.0.0",
-    "recharts": "^2.15.0",
+    "recharts": "^3.0.0",
     "sonner": "^2.0.0",
     "tailwind-merge": "^3.0.0",
     "three": "^0.174.0",
@@ -71,7 +68,6 @@
     "supabase": "^2.15.0",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.7.0",
-    "vercel": "^54.21.1",
     "vitest": "^3.2.7"
   }
 }
