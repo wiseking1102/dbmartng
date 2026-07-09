@@ -107,18 +107,40 @@ export function useAuth() {
   const signInWithEmail = useCallback(
     async (email: string, password: string) => {
       const supabase = supabaseRef.current;
-      const { error } = await supabase.auth.signInWithPassword({
+      const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
       if (error) throw error;
 
-      // Admin redirect check handled server-side in callback route
-      // Client-side: check allowlist via API route for redirect
-      const { detected, claimed } = await checkAdminAllowlist(email);
-      if (detected && claimed) {
-        router.push("/dashboard/admin");
+      const userToRedirect = data?.user;
+      if (userToRedirect) {
+        // Fetch the user's actual role from the database
+        const { data: profile } = await (supabase
+          .from("users")
+          .select("role")
+          .eq("id", userToRedirect.id)
+          .single() as never) as unknown as { data: { role: string } | null };
+
+        const userRole = profile?.role;
+
+        if (userRole === "admin" || userRole === "sub_admin") {
+          router.push("/dashboard/admin");
+        } else if (userRole === "vendor") {
+          router.push("/dashboard/vendor");
+        } else if (userRole === "buyer") {
+          router.push("/dashboard/buyer");
+        } else {
+          // Fallback: check admin allowlist for admin setup flow
+          const { detected, claimed } = await checkAdminAllowlist(email);
+          if (detected && claimed) {
+            router.push("/dashboard/admin");
+          } else {
+            router.push("/");
+          }
+        }
       } else {
+        // If no user returned but no error, redirect to home as fallback
         router.push("/");
       }
     },
