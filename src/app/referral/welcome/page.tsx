@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { ReferralWelcomeClient } from "./WelcomeClient";
 
+export const dynamic = "force-dynamic";
+
 interface WelcomePageProps {
   searchParams: Promise<{ ref?: string }>;
 }

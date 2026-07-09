@@ -30,17 +30,19 @@ export function useAuth() {
       } = await supabase.auth.getSession();
 
       if (session?.user) {
-        const { data: profile } = await (supabase
+        const { data: profile } = await supabase
           .from("users")
           .select("role")
           .eq("id", session.user.id)
-          .single() as never) as unknown as { data: { role: string } | null };
+          .single();
+
+        const role = (profile as { role: string | null } | null)?.role || null;
 
         setState({
           user: session.user,
-          role: profile?.role as "buyer" | "vendor" | "admin" | "sub_admin" | null || null,
+          role: role as AuthState["role"],
           loading: false,
-          isAdmin: profile?.role === "admin",
+          isAdmin: role === "admin",
         });
       } else {
         setState((prev) => ({ ...prev, loading: false }));
@@ -53,17 +55,19 @@ export function useAuth() {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (session?.user) {
-        const { data: profile } = await (supabase
+        const { data: profile } = await supabase
           .from("users")
           .select("role")
           .eq("id", session.user.id)
-          .single() as never) as unknown as { data: { role: string } | null };
+          .single();
+
+        const role = (profile as { role: string | null } | null)?.role || null;
 
         setState({
           user: session.user,
-          role: profile?.role as "buyer" | "vendor" | "admin" | "sub_admin" | null || null,
+          role: role as AuthState["role"],
           loading: false,
-          isAdmin: profile?.role === "admin",
+          isAdmin: role === "admin",
         });
       } else {
         setState({ user: null, role: null, loading: false, isAdmin: false });
@@ -79,6 +83,10 @@ export function useAuth() {
       provider: "google",
       options: {
         redirectTo: `${window.location.origin}/api/auth/callback`,
+        queryParams: {
+          access_type: "offline",
+          prompt: "consent",
+        },
       },
     });
     if (error) throw error;
@@ -116,19 +124,19 @@ export function useAuth() {
       const userToRedirect = data?.user;
       if (userToRedirect) {
         // Fetch the user's actual role from the database
-        const { data: profile } = await (supabase
+        const { data: profile } = await supabase
           .from("users")
           .select("role")
           .eq("id", userToRedirect.id)
-          .single() as never) as unknown as { data: { role: string } | null };
+          .single();
 
-        const userRole = profile?.role;
+        const role = (profile as { role: string | null } | null)?.role;
 
-        if (userRole === "admin" || userRole === "sub_admin") {
+        if (role === "admin" || role === "sub_admin") {
           router.push("/dashboard/admin");
-        } else if (userRole === "vendor") {
+        } else if (role === "vendor") {
           router.push("/dashboard/vendor");
-        } else if (userRole === "buyer") {
+        } else if (role === "buyer") {
           router.push("/dashboard/buyer");
         } else {
           // Fallback: check admin allowlist for admin setup flow
@@ -143,6 +151,8 @@ export function useAuth() {
         // If no user returned but no error, redirect to home as fallback
         router.push("/");
       }
+
+      router.refresh();
     },
     [router, checkAdminAllowlist]
   );
@@ -161,7 +171,6 @@ export function useAuth() {
       if (error) throw error;
 
       if (data.user) {
-        // Create user profile via API route
         const response = await fetch("/api/auth/create-user", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -180,9 +189,7 @@ export function useAuth() {
         if (referralCode) {
           router.push(`/referral/welcome?ref=${referralCode}`);
         } else {
-          router.push(
-            role === "vendor" ? "/onboarding" : "/"
-          );
+          router.push(role === "vendor" ? "/onboarding" : "/");
         }
       }
       return { isAdminSetup: false };
@@ -213,7 +220,6 @@ export function useAuth() {
       if (error) throw error;
 
       if (data.user) {
-        // Create/update vendor user profile if first time
         const { data: existingProfile } = await supabase
           .from("users")
           .select("id")

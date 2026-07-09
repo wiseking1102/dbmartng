@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Inter, Manrope } from "next/font/google";
+import { Suspense } from "react";
 import "./globals.css";
 import { Toaster } from "sonner";
 import { OrganizationJsonLd } from "@/components/seo/JsonLd";
@@ -89,7 +90,9 @@ export default function RootLayout({
       <body className="min-h-screen bg-surface font-sans text-gray-900 antialiased">
         <OrganizationJsonLd />
         <LenisProvider>
-          {children}
+          <Suspense fallback={null}>
+            {children}
+          </Suspense>
         </LenisProvider>
         <ChatWidget />
         <SocialProofProvider />

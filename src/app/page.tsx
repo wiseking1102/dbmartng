@@ -10,7 +10,6 @@ import { Button } from "@/components/ui/button";
 import { HeroAnimations } from "@/components/animations/HeroAnimations";
 import { Search, Store, Users, Shield, TrendingUp, ArrowRight, Star } from "lucide-react";
 
-// Lazy-load the 3D scene — never blocks FCP
 const Scene3D = dynamic(
   () => import("@/components/hero/Scene3D").then((mod) => ({ default: mod.Scene3D })),
   {
@@ -76,20 +75,18 @@ const stats = [
   { value: "4.8★", label: "Avg. Vendor Rating", icon: Star },
 ];
 
-const heroRef = useRef<HTMLDivElement>(null);
-
 export default function HomePage() {
+  const heroRef = useRef<HTMLDivElement>(null); // ✅ MOVED INSIDE COMPONENT
+
   return (
     <>
       <Header />
       <HeroAnimations>
       <main>
-        {/* ─── Hero Section ─── */}
         <section
           ref={heroRef}
           className="relative min-h-[90vh] flex items-center bg-gradient-to-br from-brand-navy via-brand-navy-dark to-[#041c3d] overflow-hidden"
         >
-          {/* Background Pattern */}
           <div className="absolute inset-0 opacity-[0.03]">
             <div
               className="absolute inset-0"
@@ -102,7 +99,6 @@ export default function HomePage() {
 
           <div className="relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-24 lg:py-32">
             <div className="grid lg:grid-cols-2 gap-12 items-center">
-              {/* Left Content */}
               <div className="text-center lg:text-left">
                 <div className="hero-badge inline-flex items-center gap-2 px-4 py-2 rounded-full bg-brand-gold/10 border border-brand-gold/20 mb-6">
                   <span className="h-2 w-2 rounded-full bg-brand-gold animate-pulse-soft" />
@@ -121,7 +117,6 @@ export default function HomePage() {
                   connect directly with businesses near you — all in one place.
                 </p>
 
-                {/* Search Bar */}
                 <div className="hero-search max-w-2xl mx-auto lg:mx-0 mb-8">
                   <div className="relative">
                     <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
@@ -133,7 +128,6 @@ export default function HomePage() {
                   </div>
                 </div>
 
-                {/* CTA Buttons */}
                 <div className="hero-cta flex flex-wrap gap-4 justify-center lg:justify-start">
                   <Link href="/browse">
                     <Button variant="gold" size="lg">
@@ -153,14 +147,12 @@ export default function HomePage() {
                 </div>
               </div>
 
-              {/* Right: 3D / Brand Visual (lazy-loaded) */}
               <div className="hidden lg:flex items-center justify-center">
                 <Scene3D />
               </div>
             </div>
           </div>
 
-          {/* Scroll Indicator */}
           <div className="absolute bottom-8 left-1/2 -translate-x-1/2 animate-bounce">
             <div className="w-6 h-10 rounded-full border-2 border-white/30 flex items-start justify-center p-1">
               <div className="w-1.5 h-3 rounded-full bg-white/60 animate-pulse-soft" />
@@ -168,7 +160,6 @@ export default function HomePage() {
           </div>
         </section>
 
-        {/* ─── Stats Bar ─── */}
         <section className="stats-section relative -mt-16 z-10">
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
             <div className="glass-strong rounded-2xl p-8 grid grid-cols-2 md:grid-cols-4 gap-8">
@@ -187,7 +178,6 @@ export default function HomePage() {
           </div>
         </section>
 
-        {/* ─── Categories ─── */}
         <section className="categories-section py-20 bg-surface-secondary">
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
             <div className="text-center mb-12">
@@ -220,7 +210,6 @@ export default function HomePage() {
           </div>
         </section>
 
-        {/* ─── Featured Vendors ─── */}
         <section className="featured-section py-20">
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
             <div className="flex items-end justify-between mb-12">
@@ -281,7 +270,6 @@ export default function HomePage() {
           </div>
         </section>
 
-        {/* ─── How It Works ─── */}
         <section className="how-it-works-section py-20 bg-brand-navy text-white">
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
             <div className="text-center mb-16">
@@ -330,7 +318,6 @@ export default function HomePage() {
           </div>
         </section>
 
-        {/* ─── CTA Section ─── */}
         <section className="cta-section py-20 bg-gradient-to-br from-brand-gold/10 to-brand-navy/5">
           <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 text-center">
             <h2 className="text-3xl sm:text-4xl font-bold text-brand-navy font-display mb-4">

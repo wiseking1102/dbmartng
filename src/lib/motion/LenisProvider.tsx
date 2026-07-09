@@ -12,15 +12,14 @@ export function LenisProvider({ children }: { children: React.ReactNode }) {
   const lenisRef = useRef<LenisRef>(null);
 
   useEffect(() => {
-    function update(time: number) {
-      lenisRef.current?.lenis?.raf(time);
-    }
+    const lenis = lenisRef.current?.lenis;
+    if (!lenis) return;
 
-    gsap.ticker.add(update);
-    gsap.ticker.lagSmoothing(0);
+    // Sync ScrollTrigger with Lenis — this is the correct integration
+    lenis.on("scroll", ScrollTrigger.update);
 
     return () => {
-      gsap.ticker.remove(update);
+      lenis.off("scroll", ScrollTrigger.update);
     };
   }, []);
 
@@ -31,6 +30,8 @@ export function LenisProvider({ children }: { children: React.ReactNode }) {
       options={{
         lerp: 0.1,
         syncTouch: true,
+        touchMultiplier: 2,
+        smoothWheel: true,
       }}
     >
       {children}
