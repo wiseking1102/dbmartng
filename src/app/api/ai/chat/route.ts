@@ -2,13 +2,8 @@ import { GoogleGenerativeAI, SchemaType, type FunctionDeclaration } from "@googl
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-// Initialise the Gemini client once outside the handler (cold start friendly)
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 
-/**
- * DBMartNG system prompt — gives Gemini the context it needs to answer
- * questions about the platform and help buyers find vendors.
- */
 const SYSTEM_PROMPT = `You are DBAssist, the helpful AI assistant for DBMartNG — Nigeria's premier business directory and marketplace.
 
 ## Your role
@@ -36,10 +31,6 @@ When a user asks you to find a business, product, or service:
 ## Current date: ${new Date().toLocaleDateString("en-NG", { year: "numeric", month: "long", day: "numeric" })}
 `;
 
-/**
- * Allowed tool / function declarations for Gemini.
- * This lets the model request vendor searches when appropriate.
- */
 const SEARCH_VENDORS_FUNC: FunctionDeclaration = {
   name: "searchVendors",
   description:
@@ -71,10 +62,6 @@ const SEARCH_VENDORS_FUNC: FunctionDeclaration = {
   },
 };
 
-/**
- * Searches vendor_profiles + listings in Supabase for matching businesses.
- * Returns formatted results for Gemini to present conversationally.
- */
 async function searchVendors(params: {
   query: string;
   category?: string;
@@ -86,7 +73,6 @@ async function searchVendors(params: {
     const limit = Math.min(params.limit || 5, 10);
     const searchTerm = `%${params.query}%`;
 
-    // Search by business name, description, city, state
     let query = adminClient
       .from("vendor_profiles")
       .select(
@@ -110,7 +96,6 @@ async function searchVendors(params: {
       .limit(limit);
 
     if (params.category) {
-      // Category filter via categories table
       const { data: catData } = await adminClient
         .from("categories")
         .select("id")
@@ -154,12 +139,6 @@ async function searchVendors(params: {
   }
 }
 
-/**
- * POST /api/ai/chat
- *
- * Accepts: { message: string, history?: { role: "user"|"model", text: string }[] }
- * Returns: Streaming text response from Gemini
- */
 export async function POST(request: Request) {
   try {
     const { message, history } = await request.json();
@@ -171,7 +150,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // Check for API key
     if (!process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY === "your-gemini-api-key") {
       return NextResponse.json(
         {
@@ -182,9 +160,8 @@ export async function POST(request: Request) {
       );
     }
 
-    // Build the model with system instructions and the search tool
     const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash",
+      model: "gemini-2.0-flash", // ✅ CHANGED FROM gemini-1.5-flash
       systemInstruction: SYSTEM_PROMPT,
       tools: [
         {
@@ -193,7 +170,6 @@ export async function POST(request: Request) {
       ],
     });
 
-    // Build conversation history
     const chatHistory: { role: "user" | "model"; parts: { text: string }[] }[] =
       [];
 
@@ -206,19 +182,15 @@ export async function POST(request: Request) {
       }
     }
 
-    // Start chat session
     const chat = model.startChat({
       history: chatHistory,
     });
 
-    // Send message and handle function calls automatically
     let result = await chat.sendMessage(message);
     let response = result.response;
 
-    // Handle function calls — Gemini may ask to search vendors
     const functionCalls = response.functionCalls();
     if (functionCalls && functionCalls.length > 0) {
-      // Process each function call
       for (const fnCall of functionCalls) {
         if (fnCall.name === "searchVendors") {
           const args = fnCall.args as Record<string, unknown>;
@@ -229,7 +201,6 @@ export async function POST(request: Request) {
             limit: (args.limit as number) || 5,
           });
 
-          // Send the function result back to Gemini
           const fnResult = await chat.sendMessage([
             {
               functionResponse: {
@@ -245,15 +216,12 @@ export async function POST(request: Request) {
 
     const text = response.text();
 
-    // Return streaming response
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       async start(controller) {
-        // Simulate streaming chunk by chunk for a natural feel
         const words = text.split(" ");
         for (let i = 0; i < words.length; i++) {
           controller.enqueue(encoder.encode(words[i] + (i < words.length - 1 ? " " : "")));
-          // Small delay between words for streaming effect
           await new Promise((resolve) => setTimeout(resolve, 20));
         }
         controller.close();
@@ -269,7 +237,6 @@ export async function POST(request: Request) {
   } catch (err) {
     console.error("Gemini chat error:", err);
 
-    // Preserve the streaming response shape even on error
     const encoder = new TextEncoder();
     const errorMessage = getErrorMessage(err);
 
@@ -292,12 +259,8 @@ export async function POST(request: Request) {
   }
 }
 
-/**
- * Extract a human-readable error message from various error shapes.
- */
 function getErrorMessage(err: unknown): string {
   if (err instanceof Error) {
-    // Check for common API errors
     if (err.message.includes("API_KEY_INVALID")) {
       return "The AI service is not properly configured. Please contact the platform administrator.";
     }
