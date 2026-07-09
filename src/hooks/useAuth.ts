@@ -36,11 +36,13 @@ export function useAuth() {
           .eq("id", session.user.id)
           .single();
 
+        const role = (profile as { role: string | null } | null)?.role || null;
+
         setState({
           user: session.user,
-          role: (profile?.role as AuthState["role"]) || null,
+          role: role as AuthState["role"],
           loading: false,
-          isAdmin: profile?.role === "admin",
+          isAdmin: role === "admin",
         });
       } else {
         setState((prev) => ({ ...prev, loading: false }));
@@ -59,11 +61,13 @@ export function useAuth() {
           .eq("id", session.user.id)
           .single();
 
+        const role = (profile as { role: string | null } | null)?.role || null;
+
         setState({
           user: session.user,
-          role: (profile?.role as AuthState["role"]) || null,
+          role: role as AuthState["role"],
           loading: false,
-          isAdmin: profile?.role === "admin",
+          isAdmin: role === "admin",
         });
       } else {
         setState({ user: null, role: null, loading: false, isAdmin: false });
@@ -117,16 +121,14 @@ export function useAuth() {
       });
       if (error) throw error;
 
-      // Get user role directly from users table
       const { data: profile } = await supabase
         .from("users")
         .select("role")
         .eq("id", data.user.id)
         .single();
 
-      const role = profile?.role;
+      const role = (profile as { role: string | null } | null)?.role;
 
-      // Redirect based on role
       if (role === "admin") {
         router.push("/dashboard/admin");
       } else if (role === "vendor") {
@@ -135,7 +137,7 @@ export function useAuth() {
         router.push("/");
       }
       
-      router.refresh(); // Force UI to update logged-in state
+      router.refresh();
     },
     [router]
   );
