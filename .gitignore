@@ -47,3 +47,7 @@ next-env.d.ts
 
 .vercel
 .env*
+
+# build logs
+*logs*.txt
+*.log
