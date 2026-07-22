@@ -28,8 +28,16 @@ const footerLinks = {
 
 export function Footer() {
   return (
-    <footer className="bg-brand-navy text-white">
-      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-12 lg:py-16">
+    <footer className="bg-brand-navy text-white relative overflow-hidden">
+      <div className="absolute inset-0 mesh-navy opacity-50" />
+      <div className="absolute inset-0 opacity-[0.02] pointer-events-none"
+        style={{
+          backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`,
+          backgroundRepeat: 'repeat',
+          backgroundSize: '256px 256px',
+        }}
+      />
+      <div className="relative z-10 mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-12 lg:py-16">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-8 lg:gap-12">
           {/* Brand Column */}
           <div className="col-span-2 md:col-span-1">
@@ -76,9 +84,12 @@ export function Footer() {
 
         {/* Bottom Bar */}
         <div className="mt-12 pt-8 border-t border-white/10 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <p className="text-sm text-gray-500">
-            &copy; {new Date().getFullYear()} DBMartNG. All rights reserved.
-          </p>
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-brand-gold animate-pulse-soft" />
+            <p className="text-sm text-gray-500">
+              &copy; {new Date().getFullYear()} DBMartNG. All rights reserved.
+            </p>
+          </div>
           <p className="text-sm text-gray-500">
             Made with ❤️ in Asaba, Delta State, Nigeria
           </p>

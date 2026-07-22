@@ -4,7 +4,7 @@ import type { Metadata } from "next";
 import { Header } from "@/components/layout/header";
 import { Footer } from "@/components/layout/footer";
 import { Button } from "@/components/ui/button";
-import { Target, Eye, Heart, Users, Shield, TrendingUp } from "lucide-react";
+import { Target, Eye, Heart } from "lucide-react";
 
 export const metadata: Metadata = {
   title: "About",
@@ -51,12 +51,16 @@ export default function AboutPage() {
       <Header />
       <main className="pt-20">
         {/* Hero */}
-        <section className="py-16 bg-gradient-to-b from-brand-navy/5 to-white">
-          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 text-center">
-            <h1 className="text-4xl sm:text-5xl font-bold text-brand-navy font-display mb-4">
-              About DBMartNG
+        <section className="py-20 relative overflow-hidden">
+          <div className="absolute inset-0 mesh-navy opacity-30" />
+          <div className="relative z-10 mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 text-center">
+            <div className="badge-gold inline-flex mb-4">
+              About Us
+            </div>
+            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-brand-navy font-display mb-4 leading-tight">
+              About <span className="gradient-text">DBMartNG</span>
             </h1>
-            <p className="text-xl text-gray-600 max-w-2xl mx-auto">
+            <p className="text-xl text-gray-600 max-w-2xl mx-auto leading-relaxed">
               Nigeria&apos;s premier business directory and marketplace —
               connecting buyers with verified vendors across the nation.
             </p>
@@ -64,16 +68,16 @@ export default function AboutPage() {
         </section>
 
         {/* Values */}
-        <section className="py-16">
+        <section className="py-20">
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
             <div className="grid md:grid-cols-3 gap-8">
               {values.map((v) => (
-                <div key={v.title} className="glass rounded-2xl p-8 text-center">
-                  <div className="w-14 h-14 rounded-2xl bg-brand-gold/10 flex items-center justify-center mx-auto mb-5">
+                <div key={v.title} className="bento-card p-8 text-center group">
+                  <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-brand-gold/10 to-brand-gold/5 flex items-center justify-center mx-auto mb-5 group-hover:scale-110 transition-transform duration-300">
                     <v.icon className="h-7 w-7 text-brand-gold" />
                   </div>
                   <h2 className="text-xl font-bold text-brand-navy mb-3">{v.title}</h2>
-                  <p className="text-gray-600">{v.desc}</p>
+                  <p className="text-gray-600 leading-relaxed">{v.desc}</p>
                 </div>
               ))}
             </div>
@@ -81,7 +85,7 @@ export default function AboutPage() {
         </section>
 
         {/* Founders */}
-        <section id="credits" className="py-16 bg-surface-secondary">
+        <section id="credits" className="py-20 bg-surface-secondary">
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
             <h2 className="text-3xl font-bold text-brand-navy font-display text-center mb-12">
               Meet the Founders
@@ -108,7 +112,8 @@ export default function AboutPage() {
         </section>
 
         {/* Stats */}
-        <section className="py-16 bg-brand-navy text-white">
+        <section className="py-20 bg-brand-navy text-white relative overflow-hidden">
+          <div className="absolute inset-0 mesh-navy" />
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
               {[
@@ -129,7 +134,9 @@ export default function AboutPage() {
         </section>
 
         {/* CTA */}
-        <section className="py-16 text-center">
+        <section className="py-20 text-center relative overflow-hidden">
+          <div className="absolute inset-0 mesh-gold" />
+          <div className="relative z-10">
           <div className="mx-auto max-w-2xl px-4 sm:px-6 lg:px-8">
             <h2 className="text-3xl font-bold text-brand-navy font-display mb-4">
               Join Our Community
@@ -150,6 +157,7 @@ export default function AboutPage() {
                 </Button>
               </Link>
             </div>
+          </div>
           </div>
         </section>
       </main>

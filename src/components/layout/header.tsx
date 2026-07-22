@@ -39,11 +39,12 @@ export function Header() {
   return (
     <header
       className={cn(
-        "fixed top-0 left-0 right-0 z-50 transition-all duration-300",
+        "fixed top-0 left-0 right-0 z-50 transition-all duration-500",
         isScrolled
-          ? "bg-white/90 backdrop-blur-xl shadow-sm border-b border-gray-100"
+          ? "bg-white/85 backdrop-blur-3xl shadow-lg border-b border-white/30"
           : "bg-transparent"
       )}
+      style={isScrolled ? { backgroundImage: 'radial-gradient(ellipse at 20% 50%, rgba(201, 176, 55, 0.03) 0%, transparent 50%)' } : {}}
     >
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="flex h-16 items-center justify-between">
@@ -57,8 +58,10 @@ export function Header() {
               className="h-9 w-9"
               priority
             />
-            <span className="text-xl font-bold text-brand-navy font-display hidden sm:block">
-              DBMart<span className="text-brand-gold">NG</span>
+            <span className="text-xl font-bold font-display hidden sm:block">
+              <span className={isScrolled ? "text-brand-navy" : "text-white"}>
+                DBMart<span className="text-brand-gold">NG</span>
+              </span>
             </span>
           </Link>
 
@@ -68,7 +71,11 @@ export function Header() {
               <Link
                 key={link.href}
                 href={link.href}
-                className="nav-link text-sm font-medium text-gray-700 hover:text-brand-navy transition-colors py-1"
+                className={`nav-link text-sm font-medium transition-colors py-1 ${
+                  isScrolled
+                    ? "text-gray-700 hover:text-brand-navy"
+                    : "text-white/80 hover:text-white"
+                }`}
               >
                 {link.label}
               </Link>
@@ -108,7 +115,11 @@ export function Header() {
             ) : (
               !loading && (
                 <Link href="/auth">
-                  <Button variant="primary" size="sm">
+                  <Button
+                    variant={isScrolled ? "primary" : "outline"}
+                    size="sm"
+                    className={!isScrolled ? "border-white/30 text-white hover:bg-white/10" : ""}
+                  >
                     Sign In
                   </Button>
                 </Link>
@@ -117,7 +128,11 @@ export function Header() {
 
             {/* Mobile Menu Toggle */}
             <button
-              className="md:hidden p-2 text-gray-700 hover:text-brand-navy"
+              className={`md:hidden p-2 rounded-lg transition-colors ${
+                isScrolled
+                  ? "text-gray-700 hover:text-brand-navy hover:bg-gray-100"
+                  : "text-white/80 hover:text-white hover:bg-white/10"
+              }`}
               onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
               aria-label="Toggle menu"
             >
@@ -129,23 +144,28 @@ export function Header() {
             </button>
           </div>
         </div>
-      </div>
-
-      {/* Mobile Menu */}
+      </div>          {/* Mobile Menu */}
       {isMobileMenuOpen && (
-        <div className="md:hidden bg-white/95 backdrop-blur-xl border-b border-gray-100 animate-slide-down">
-          <div className="px-4 py-4 space-y-3">
-            {navLinks.map((link) => (
+        <div className={`md:hidden backdrop-blur-2xl border-b animate-slide-down ${
+          isScrolled
+            ? "bg-white/95 border-gray-100"
+            : "bg-brand-navy/95 border-white/10"
+        }`}>
+          <div className="px-4 py-4 space-y-3">              {navLinks.map((link) => (
               <Link
                 key={link.href}
                 href={link.href}
-                className="block py-2 text-base font-medium text-gray-700 hover:text-brand-navy"
+                className={`block py-2 text-base font-medium transition-colors ${
+                  isScrolled
+                    ? "text-gray-700 hover:text-brand-navy"
+                    : "text-white/80 hover:text-white"
+                }`}
                 onClick={() => setIsMobileMenuOpen(false)}
               >
                 {link.label}
               </Link>
             ))}
-            <hr className="border-gray-100" />
+            <hr className={isScrolled ? "border-gray-100" : "border-white/10"} />
             {user ? (
               <>
                 <Link

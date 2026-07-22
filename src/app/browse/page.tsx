@@ -109,12 +109,23 @@ export default function BrowsePage() {
       <Header />
       <main className="pt-20">
         {/* Hero Search */}
-        <section className="bg-gradient-to-r from-brand-navy to-brand-navy-dark py-12">
+        <section className="bg-gradient-to-r from-brand-navy to-brand-navy-dark py-16 relative overflow-hidden">
+          <div className="absolute inset-0 opacity-[0.03]"
+            style={{
+              backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`,
+              backgroundRepeat: 'repeat',
+              backgroundSize: '256px 256px',
+            }}
+          />
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-            <h1 className="text-3xl sm:text-4xl font-bold text-white font-display mb-2">
-              Browse Vendors
+            <div className="badge-gold inline-flex mb-4 border-white/20 text-brand-gold">
+              <Search className="h-3.5 w-3.5" />
+              Discover
+            </div>
+            <h1 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-white font-display mb-2 leading-tight">
+              Browse <span className="text-brand-gold">Vendors</span>
             </h1>
-            <p className="text-gray-300 mb-6">
+            <p className="text-gray-300 mb-6 max-w-xl">
               Discover verified businesses across Nigeria
             </p>
             <div className="max-w-2xl">

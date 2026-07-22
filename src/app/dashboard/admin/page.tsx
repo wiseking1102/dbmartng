@@ -7,7 +7,6 @@ import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
 import StaggerEntrance from "@/components/animations/StaggerEntrance";
-import { createClient } from "@/lib/supabase/client";
 import {
   Users,
   Store,

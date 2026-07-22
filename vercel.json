@@ -6,7 +6,7 @@
   "regions": ["fra1"],
   "git": {
     "deploymentEnabled": {
-      "main": true
+      "master": true
     }
   },
   "headers": [

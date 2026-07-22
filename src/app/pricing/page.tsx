@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { Header } from "@/components/layout/header";
 import { Footer } from "@/components/layout/footer";
 import { Button } from "@/components/ui/button";
-import { Check, X, HelpCircle, Star } from "lucide-react";
+import { Check, HelpCircle, Star } from "lucide-react";
 import { FAQPageJsonLd } from "@/components/seo/JsonLd";
 import { PricingAnimations } from "@/components/animations/PricingAnimations";
 
@@ -89,16 +89,21 @@ export default function PricingPage() {
       <Header />
       <main className="pt-20">
         {/* Hero */}
-        <section className="pricing-hero py-16 bg-gradient-to-b from-brand-navy/5 to-white">
-          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 text-center">
-            <h1 className="text-4xl sm:text-5xl font-bold text-brand-navy font-display mb-4">
-              Simple, Transparent Pricing
+        <section className="pricing-hero py-20 relative overflow-hidden">
+          <div className="absolute inset-0 mesh-gold" />
+          <div className="relative z-10 mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 text-center">
+            <div className="badge-gold inline-flex mb-4">
+              <Star className="h-3.5 w-3.5 fill-current" />
+              Simple Pricing
+            </div>
+            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-brand-navy font-display mb-4 leading-tight">
+              Simple, <span className="gradient-text">Transparent</span> Pricing
             </h1>
-            <p className="text-xl text-gray-600 max-w-2xl mx-auto mb-4">
+            <p className="text-xl text-gray-600 max-w-2xl mx-auto mb-6 leading-relaxed">
               Start with a 30-day full-access trial — no credit card required.
               Then choose the plan that works for your business.
             </p>
-            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-brand-gold/10 border border-brand-gold/20 text-sm text-brand-gold font-medium">
+            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-brand-gold/10 border border-brand-gold/20 text-sm text-brand-gold font-medium backdrop-blur-sm">
               <Star className="h-4 w-4 fill-current" />
               All prices in Nigerian Naira (NGN)
             </div>
@@ -110,7 +115,7 @@ export default function PricingPage() {
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
             <div className="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
               {/* Free Tier */}
-              <div className="pricing-card glass rounded-3xl p-8 border-2 border-gray-100 relative">
+              <div className="pricing-card bento-card p-8 relative">
                 <div className="mb-6">
                   <h2 className="text-2xl font-bold text-brand-navy mb-2">Free</h2>
                   <p className="text-gray-500">For getting started</p>
@@ -138,7 +143,7 @@ export default function PricingPage() {
               </div>
 
               {/* Pro Tier */}
-              <div className="pricing-card glass rounded-3xl p-8 border-2 border-brand-gold relative overflow-hidden">
+              <div className="pricing-card bento-card p-8 relative overflow-hidden animated-border">
                 <div className="absolute top-3 right-3 bg-brand-gold text-brand-navy text-xs font-bold px-3 py-1 rounded-full">
                   Most Popular
                 </div>
@@ -172,9 +177,13 @@ export default function PricingPage() {
         </section>
 
         {/* FAQ */}
-        <section className="faq-section py-16 bg-surface-secondary">
+        <section className="faq-section py-20 bg-surface-secondary">
           <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8">
-            <h2 className="text-3xl font-bold text-brand-navy font-display text-center mb-12">
+            <div className="badge-gold inline-flex mb-4 mx-auto" style={{ display: 'table' }}>
+              <HelpCircle className="h-3.5 w-3.5" />
+              Got Questions?
+            </div>
+            <h2 className="text-3xl sm:text-4xl font-bold text-brand-navy font-display text-center mb-12">
               Frequently Asked Questions
             </h2>
             <div className="space-y-4">

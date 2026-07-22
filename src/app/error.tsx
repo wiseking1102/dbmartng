@@ -1,6 +1,7 @@
 "use client";
 
 import { Header } from "@/components/layout/header";
+import { Footer } from "@/components/layout/footer";
 import { Button } from "@/components/ui/button";
 import { AlertTriangle } from "lucide-react";
 
@@ -33,6 +34,7 @@ export default function Error({
           </div>
         </div>
       </main>
+      <Footer />
     </>
   );
 }
