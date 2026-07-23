@@ -24,6 +24,7 @@ export function useAuth() {
 
   useEffect(() => {
     const supabase = supabaseRef.current;
+
     const getSession = async () => {
       const {
         data: { session },
@@ -37,7 +38,6 @@ export function useAuth() {
           .single();
 
         const role = (profile as { role: string | null } | null)?.role || null;
-
         setState({
           user: session.user,
           role: role as AuthState["role"],
@@ -62,7 +62,6 @@ export function useAuth() {
           .single();
 
         const role = (profile as { role: string | null } | null)?.role || null;
-
         setState({
           user: session.user,
           role: role as AuthState["role"],
@@ -70,7 +69,12 @@ export function useAuth() {
           isAdmin: role === "admin",
         });
       } else {
-        setState({ user: null, role: null, loading: false, isAdmin: false });
+        setState({
+          user: null,
+          role: null,
+          loading: false,
+          isAdmin: false,
+        });
       }
     });
 
@@ -101,10 +105,7 @@ export function useAuth() {
           body: JSON.stringify({ identifier: email }),
         });
         const data = await response.json();
-        return {
-          detected: data.detected,
-          claimed: data.claimed,
-        };
+        return { detected: data.detected, claimed: data.claimed };
       } catch {
         return { detected: false, claimed: false };
       }
@@ -121,132 +122,31 @@ export function useAuth() {
       });
       if (error) throw error;
 
-      const userToRedirect = data?.user;
-      if (userToRedirect) {
-        // Fetch the user's actual role from the database
-        const { data: profile } = await supabase
-          .from("users")
-          .select("role")
-          .eq("id", userToRedirect.id)
-          .single();
+      // FIX: Wait for session to fully establish and cookies to be set
+      // before redirecting. This prevents the middleware from seeing
+      // an empty session on the dashboard request.
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (!session?.user) {
+        throw new Error("Session not established after sign-in");
+      }
 
-        const role = (profile as { role: string | null } | null)?.role;
+      // Now fetch profile and redirect
+      const { data: profile } = await supabase
+        .from("users")
+        .select("role")
+        .eq("id", session.user.id)
+        .single();
 
-        if (role === "admin" || role === "sub_admin") {
-          router.push("/dashboard/admin");
-        } else if (role === "vendor") {
-          router.push("/dashboard/vendor");
-        } else if (role === "buyer") {
-          router.push("/dashboard/buyer");
-        } else {
-          // Fallback: check admin allowlist for admin setup flow
-          const { detected, claimed } = await checkAdminAllowlist(email);
-          if (detected && claimed) {
-            router.push("/dashboard/admin");
-          } else {
-            router.push("/");
-          }
-        }
+      const role = (profile as { role: string | null } | null)?.role;
+
+      if (role === "admin" || role === "sub_admin") {
+        router.push("/dashboard/admin");
+      } else if (role === "vendor") {
+        router.push("/dashboard/vendor");
       } else {
-        // If no user returned but no error, redirect to home as fallback
-        router.push("/");
+        router.push("/dashboard");
       }
-
-      router.refresh();
-    },
-    [router, checkAdminAllowlist]
-  );
-
-  const signUpWithEmail = useCallback(
-    async (email: string, password: string, role: "buyer" | "vendor", referralCode?: string) => {
-      const supabase = supabaseRef.current;
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: { role },
-        },
-      });
-
-      if (error) throw error;
-
-      if (data.user) {
-        const response = await fetch("/api/auth/create-user", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            userId: data.user.id,
-            email: data.user.email,
-            role,
-            fullName: data.user.user_metadata?.full_name || null,
-            referralCode: referralCode || null,
-          }),
-        });
-
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.error || "Failed to create user");
-
-        if (referralCode) {
-          router.push(`/referral/welcome?ref=${referralCode}`);
-        } else {
-          router.push(role === "vendor" ? "/onboarding" : "/");
-        }
-      }
-      return { isAdminSetup: false };
-    },
-    [router]
-  );
-
-  const signInWithPhone = useCallback(
-    async (phone: string) => {
-      const supabase = supabaseRef.current;
-      const { error } = await supabase.auth.signInWithOtp({
-        phone,
-      });
-      if (error) throw error;
-      return true;
-    },
-    []
-  );
-
-  const verifyPhoneOTP = useCallback(
-    async (phone: string, token: string, referralCode?: string) => {
-      const supabase = supabaseRef.current;
-      const { data, error } = await supabase.auth.verifyOtp({
-        phone,
-        token,
-        type: "sms",
-      });
-      if (error) throw error;
-
-      if (data.user) {
-        const { data: existingProfile } = await supabase
-          .from("users")
-          .select("id")
-          .eq("id", data.user.id)
-          .single();
-
-        if (!existingProfile) {
-          await fetch("/api/auth/create-user", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              userId: data.user.id,
-              phone,
-              role: "vendor",
-              fullName: null,
-              referralCode: referralCode || null,
-            }),
-          });
-        }
-
-        if (referralCode) {
-          router.push(`/referral/welcome?ref=${referralCode}`);
-        } else {
-          router.push("/onboarding");
-        }
-      }
-      return data.user;
     },
     [router]
   );
@@ -255,16 +155,12 @@ export function useAuth() {
     const supabase = supabaseRef.current;
     await supabase.auth.signOut();
     router.push("/");
-    router.refresh();
   }, [router]);
 
   return {
     ...state,
     signInWithGoogle,
     signInWithEmail,
-    signUpWithEmail,
-    signInWithPhone,
-    verifyPhoneOTP,
     signOut,
     checkAdminAllowlist,
   };
