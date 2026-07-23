@@ -3,13 +3,11 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-// ... keep your other imports
+// ... keep all your other imports
 
 export default function AuthPage() {
   const router = useRouter();
 
-  // FIX: If user is already logged in, redirect them to their dashboard
-  // instead of showing the auth selection screen.
   useEffect(() => {
     const checkSession = async () => {
       const supabase = createClient();
@@ -22,7 +20,8 @@ export default function AuthPage() {
           .eq("id", session.user.id)
           .single();
 
-        const role = profile?.role;
+        // FIX: Type assertion to bypass generated types issue
+        const role = (profile as { role: string | null } | null)?.role;
 
         if (role === "admin" || role === "sub_admin") {
           router.replace("/dashboard/admin");
@@ -37,5 +36,5 @@ export default function AuthPage() {
     checkSession();
   }, [router]);
 
-  // ... rest of your existing JSX
+  // ... your existing JSX below
 }
