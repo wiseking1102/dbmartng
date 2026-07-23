@@ -12,6 +12,10 @@ interface AuthState {
   isAdmin: boolean;
 }
 
+interface SignUpResult {
+  isAdminSetup: boolean;
+}
+
 export function useAuth() {
   const router = useRouter();
   const supabaseRef = useRef(createClient());
@@ -122,20 +126,97 @@ export function useAuth() {
       });
       if (error) throw error;
 
-      // CRITICAL FIX: Wait for session to fully establish before redirecting.
-      // This ensures cookies are set so middleware sees the session on the
-      // next request and does NOT bounce the user back to /auth.
       const { data: { session } } = await supabase.auth.getSession();
 
       if (!session?.user) {
         throw new Error("Session not established after sign-in");
       }
 
-      // Now fetch profile and redirect
       const { data: profile } = await supabase
         .from("users")
         .select("role")
         .eq("id", session.user.id)
+        .single();
+
+      const role = (profile as { role: string | null } | null)?.role;
+
+      if (role === "admin" || role === "sub_admin") {
+        router.push("/dashboard/admin");
+      } else if (role === "vendor") {
+        router.push("/dashboard/vendor");
+      } else {
+        router.push("/dashboard");
+      }
+    },
+    [router]
+  );
+
+  // FIX: Added missing signUpWithEmail function
+  const signUpWithEmail = useCallback(
+    async (
+      email: string,
+      password: string,
+      role: string,
+      referralCode?: string
+    ): Promise<SignUpResult> => {
+      const supabase = supabaseRef.current;
+
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            role,
+            referral_code: referralCode,
+          },
+        },
+      });
+
+      if (error) throw error;
+
+      // Check if this is an admin setup flow
+      if (role === "admin" || role === "sub_admin") {
+        return { isAdminSetup: true };
+      }
+
+      return { isAdminSetup: false };
+    },
+    []
+  );
+
+  // FIX: Added missing signInWithPhone function
+  const signInWithPhone = useCallback(async (phone: string) => {
+    const supabase = supabaseRef.current;
+    const { error } = await supabase.auth.signInWithOtp({
+      phone,
+    });
+    if (error) throw error;
+  }, []);
+
+  // FIX: Added missing verifyPhoneOTP function
+  const verifyPhoneOTP = useCallback(
+    async (phone: string, token: string, referralCode?: string) => {
+      const supabase = supabaseRef.current;
+      const { data, error } = await supabase.auth.verifyOtp({
+        phone,
+        token,
+        type: "sms",
+      });
+
+      if (error) throw error;
+
+      // If new user, set metadata
+      if (data.user && referralCode) {
+        await supabase.auth.updateUser({
+          data: { referral_code: referralCode },
+        });
+      }
+
+      // Redirect after successful phone verification
+      const { data: profile } = await supabase
+        .from("users")
+        .select("role")
+        .eq("id", data.user!.id)
         .single();
 
       const role = (profile as { role: string | null } | null)?.role;
@@ -161,6 +242,9 @@ export function useAuth() {
     ...state,
     signInWithGoogle,
     signInWithEmail,
+    signUpWithEmail,
+    signInWithPhone,
+    verifyPhoneOTP,
     signOut,
     checkAdminAllowlist,
   };
