@@ -30,9 +30,9 @@ export async function middleware(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  // FIX: Refresh session if user is null but session cookies exist.
-  // This handles the edge case where cookies are present but getUser()
-  // hasn't picked them up yet.
+  // CRITICAL FIX: If getUser() returns null, try getSession() as fallback.
+  // This handles the race condition where cookies exist but getUser()
+  // hasn't hydrated them yet during the first request after sign-in.
   let effectiveUser = user;
   if (!user) {
     const { data: { session } } = await supabase.auth.getSession();
