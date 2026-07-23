@@ -56,7 +56,6 @@ function AuthForm() {
   } | null>(null);
 
   // FIX: If user is already logged in, redirect to their dashboard
-  // instead of showing the auth selection screen.
   useEffect(() => {
     const checkSession = async () => {
       const { data: { session } } = await supabase.auth.getSession();
@@ -68,7 +67,6 @@ function AuthForm() {
           .eq("id", session.user.id)
           .single();
 
-        // Type assertion to fix TypeScript error
         const role = (profile as { role: string | null } | null)?.role;
 
         if (role === "admin" || role === "sub_admin") {
@@ -490,7 +488,6 @@ function AuthForm() {
                 {process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY && (
                   <Turnstile
                     onVerify={(token) => setCaptchaToken(token)}
-                    siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY}
                   />
                 )}
 
