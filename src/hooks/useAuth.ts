@@ -122,11 +122,11 @@ export function useAuth() {
       });
       if (error) throw error;
 
-      // FIX: Wait for session to fully establish and cookies to be set
-      // before redirecting. This prevents the middleware from seeing
-      // an empty session on the dashboard request.
+      // CRITICAL FIX: Wait for session to fully establish before redirecting.
+      // This ensures cookies are set so middleware sees the session on the
+      // next request and does NOT bounce the user back to /auth.
       const { data: { session } } = await supabase.auth.getSession();
-      
+
       if (!session?.user) {
         throw new Error("Session not established after sign-in");
       }
