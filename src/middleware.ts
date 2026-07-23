@@ -30,13 +30,20 @@ export async function middleware(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
+  // FIX: Refresh session if user is null but session cookies exist.
+  // This handles the edge case where cookies are present but getUser()
+  // hasn't picked them up yet.
+  let effectiveUser = user;
+  if (!user) {
+    const { data: { session } } = await supabase.auth.getSession();
+    effectiveUser = session?.user ?? null;
+  }
+
   // Protected routes
   const protectedPaths = ["/dashboard", "/account"];
-  const isProtected = protectedPaths.some((path) =>
-    request.nextUrl.pathname.startsWith(path)
-  );
+  const isProtected = protectedPaths.some((path) => request.nextUrl.pathname.startsWith(path));
 
-  if (isProtected && !user) {
+  if (isProtected && !effectiveUser) {
     const url = request.nextUrl.clone();
     url.pathname = "/auth";
     url.searchParams.set("redirect", request.nextUrl.pathname);
@@ -45,7 +52,7 @@ export async function middleware(request: NextRequest) {
 
   // Admin route protection
   if (request.nextUrl.pathname.startsWith("/dashboard/admin")) {
-    if (!user) {
+    if (!effectiveUser) {
       const url = request.nextUrl.clone();
       url.pathname = "/auth";
       return NextResponse.redirect(url);
@@ -54,7 +61,7 @@ export async function middleware(request: NextRequest) {
     const { data: profile } = await supabase
       .from("users")
       .select("role")
-      .eq("id", user.id)
+      .eq("id", effectiveUser.id)
       .single();
 
     if (!profile || profile.role !== "admin") {
