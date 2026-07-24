@@ -12,23 +12,21 @@ import {
   Package,
   MessageSquare,
   BarChart3,
-  Settings,
   CreditCard,
   LogOut,
   Plus,
   TrendingUp,
   Eye,
-  Heart,
   AlertTriangle,
   CheckCircle,
   Clock,
+  Settings,
 } from "lucide-react";
 
 interface VendorStats {
   profileViews: number;
   listingViews: number;
   totalListings: number;
-  pendingListings: number;
   messagesUnread: number;
   subscriptionStatus: string;
   trialEndsAt: string | null;
@@ -47,7 +45,6 @@ export default function VendorDashboardPage() {
 
   useEffect(() => {
     if (user && (role === "vendor" || role === "admin")) {
-      // Fetch vendor stats
       fetch("/api/vendor/stats")
         .then((r) => r.json())
         .then((json) => {
@@ -98,8 +95,6 @@ export default function VendorDashboardPage() {
       icon: CreditCard,
       href: "/dashboard/vendor/subscription",
       count: 0,
-    },
-  count: 0,
     },
   ];
 
