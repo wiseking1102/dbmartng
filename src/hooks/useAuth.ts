@@ -127,7 +127,6 @@ export function useAuth() {
       if (error) throw error;
 
       const { data: { session } } = await supabase.auth.getSession();
-
       if (!session?.user) {
         throw new Error("Session not established after sign-in");
       }
@@ -144,14 +143,15 @@ export function useAuth() {
         router.push("/dashboard/admin");
       } else if (role === "vendor") {
         router.push("/dashboard/vendor");
+      } else if (role === "buyer") {
+        router.push("/dashboard/buyer");
       } else {
-        router.push("/dashboard");
+        router.push("/");
       }
     },
     [router]
   );
 
-  // FIX: Added missing signUpWithEmail function
   const signUpWithEmail = useCallback(
     async (
       email: string,
@@ -174,7 +174,6 @@ export function useAuth() {
 
       if (error) throw error;
 
-      // Check if this is an admin setup flow
       if (role === "admin" || role === "sub_admin") {
         return { isAdminSetup: true };
       }
@@ -184,7 +183,6 @@ export function useAuth() {
     []
   );
 
-  // FIX: Added missing signInWithPhone function
   const signInWithPhone = useCallback(async (phone: string) => {
     const supabase = supabaseRef.current;
     const { error } = await supabase.auth.signInWithOtp({
@@ -193,7 +191,6 @@ export function useAuth() {
     if (error) throw error;
   }, []);
 
-  // FIX: Added missing verifyPhoneOTP function
   const verifyPhoneOTP = useCallback(
     async (phone: string, token: string, referralCode?: string) => {
       const supabase = supabaseRef.current;
@@ -205,14 +202,12 @@ export function useAuth() {
 
       if (error) throw error;
 
-      // If new user, set metadata
       if (data.user && referralCode) {
         await supabase.auth.updateUser({
           data: { referral_code: referralCode },
         });
       }
 
-      // Redirect after successful phone verification
       const { data: profile } = await supabase
         .from("users")
         .select("role")
@@ -225,8 +220,10 @@ export function useAuth() {
         router.push("/dashboard/admin");
       } else if (role === "vendor") {
         router.push("/dashboard/vendor");
+      } else if (role === "buyer") {
+        router.push("/dashboard/buyer");
       } else {
-        router.push("/dashboard");
+        router.push("/");
       }
     },
     [router]
