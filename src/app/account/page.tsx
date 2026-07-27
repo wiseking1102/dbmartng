@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { Loader2 } from "lucide-react";
 
-export default function DashboardRootPage() {
+export default function AccountRedirectPage() {
   const { user, role, loading } = useAuth();
   const router = useRouter();
 

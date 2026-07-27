@@ -74,7 +74,7 @@ function AuthForm() {
         } else if (role === "vendor") {
           router.replace("/dashboard/vendor");
         } else {
-          router.replace("/dashboard");
+          router.replace("/dashboard/buyer");
         }
       }
     };
