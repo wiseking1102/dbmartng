@@ -25,24 +25,42 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     priority: route.priority,
   }));
 
-  // Dynamic vendor profile pages would be fetched from Supabase here in production.
-  // For now, adding a representative sample.
-  // In production, uncomment the following:
-  //
-  // const supabase = createAdminClient();
-  // const { data: vendors } = await supabase
-  //   .from("vendor_profiles")
-  //   .select("slug, updated_at")
-  //   .eq("is_verified", true);
-  //
-  // const vendorRoutes = (vendors || []).map((vendor) => ({
-  //   url: `${BASE_URL}/vendors/${vendor.slug}`,
-  //   lastModified: new Date(vendor.updated_at),
-  //   changeFrequency: "weekly" as const,
-  //   priority: 0.8,
-  // }));
-  //
-  // sitemapEntries.push(...vendorRoutes);
+  try {
+    const { createAdminClient } = await import("@/lib/supabase/admin");
+    const adminClient = createAdminClient();
+
+    const { data: vendors } = await adminClient
+      .from("vendor_profiles")
+      .select("slug, updated_at")
+      .eq("is_verified", true);
+
+    if (vendors) {
+      const vendorRoutes = vendors.map((vendor: any) => ({
+        url: `${BASE_URL}/vendors/${vendor.slug}`,
+        lastModified: new Date(vendor.updated_at || Date.now()),
+        changeFrequency: "weekly" as const,
+        priority: 0.8,
+      }));
+      sitemapEntries.push(...vendorRoutes);
+    }
+
+    const { data: listings } = await adminClient
+      .from("listings")
+      .select("slug, updated_at")
+      .eq("status", "approved");
+
+    if (listings) {
+      const listingRoutes = listings.map((listing: any) => ({
+        url: `${BASE_URL}/listings/${listing.slug}`,
+        lastModified: new Date(listing.updated_at || Date.now()),
+        changeFrequency: "weekly" as const,
+        priority: 0.7,
+      }));
+      sitemapEntries.push(...listingRoutes);
+    }
+  } catch (err) {
+    console.error("Sitemap dynamic generation error:", err);
+  }
 
   return sitemapEntries;
 }

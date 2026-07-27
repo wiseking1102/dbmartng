@@ -50,8 +50,8 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // Admin route protection
-  if (request.nextUrl.pathname.startsWith("/dashboard/admin")) {
+  // Admin & Sub-Admin route protection
+  if (request.nextUrl.pathname.startsWith("/dashboard/admin") || request.nextUrl.pathname.startsWith("/admin")) {
     if (!effectiveUser) {
       const url = request.nextUrl.clone();
       url.pathname = "/auth";
@@ -64,7 +64,7 @@ export async function middleware(request: NextRequest) {
       .eq("id", effectiveUser.id)
       .single();
 
-    if (!profile || profile.role !== "admin") {
+    if (!profile || (profile.role !== "admin" && profile.role !== "sub_admin")) {
       const url = request.nextUrl.clone();
       url.pathname = "/";
       return NextResponse.redirect(url);

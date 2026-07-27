@@ -1,0 +1,5 @@
+Log into my GitHub account, open the repository "dbmartng", and check the .md file in the directory that serves as the prompt.
+
+Make sure everything is building according to the .md file prompt. Ensure there are no errors and fix whatever errors come up now or later. You can also access my Supabase account to ensure no errors originate from there.
+
+Add any missing pages and features that are described in the prompt file but not yet present in the file tree. Complete the fully functional industrial website and commit your changes to the master branch so it will auto-deploy automatically to Vercel.

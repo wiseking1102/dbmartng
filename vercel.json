@@ -41,11 +41,14 @@
       ]
     }
   ],
-  "redirects": [
+  "crons": [
     {
-      "source": "/api/paystack/reconcile",
-      "destination": "/api/paystack/reconcile",
-      "statusCode": 200
+      "path": "/api/cron/db-keepalive",
+      "schedule": "0 0 */3 * *"
+    },
+    {
+      "path": "/api/cron/reconcile-subscriptions",
+      "schedule": "0 2 * * *"
     }
   ]
 }

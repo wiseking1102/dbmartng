@@ -87,10 +87,11 @@ export function useAuth() {
 
   const signInWithGoogle = useCallback(async () => {
     const supabase = supabaseRef.current;
+    const type = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get("type") || "buyer" : "buyer";
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: `${window.location.origin}/api/auth/callback`,
+        redirectTo: `${window.location.origin}/api/auth/callback?type=${type}`,
         queryParams: {
           access_type: "offline",
           prompt: "consent",
@@ -178,9 +179,32 @@ export function useAuth() {
         return { isAdminSetup: true };
       }
 
+      if (data.user) {
+        const response = await fetch("/api/auth/create-user", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: data.user.id,
+            email: data.user.email,
+            role,
+            fullName: data.user.user_metadata?.full_name || null,
+            referralCode: referralCode || null,
+          }),
+        });
+
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "Failed to create user");
+
+        if (referralCode) {
+          router.push(`/referral/welcome?ref=${referralCode}`);
+        } else {
+          router.push(role === "vendor" ? "/onboarding" : "/dashboard/buyer");
+        }
+      }
+
       return { isAdminSetup: false };
     },
-    []
+    [router]
   );
 
   const signInWithPhone = useCallback(async (phone: string) => {

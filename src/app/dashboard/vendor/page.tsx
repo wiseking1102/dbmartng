@@ -44,7 +44,7 @@ export default function VendorDashboardPage() {
   }, [user, role, loading, router]);
 
   useEffect(() => {
-    if (user && (role === "vendor" || role === "admin")) {
+    if (user && (role === "vendor" || role === "admin" || role === "sub_admin")) {
       fetch("/api/vendor/stats")
         .then((r) => r.json())
         .then((json) => {

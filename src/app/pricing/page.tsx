@@ -70,7 +70,52 @@ const faqs = [
   },
 ];
 
-export default function PricingPage() {
+export default async function PricingPage() {
+  let proPriceFormatted = "₦5,000";
+  let freeLimit = 5;
+
+  try {
+    const { createAdminClient } = await import("@/lib/supabase/admin");
+    const adminClient = createAdminClient();
+    interface SettingItem {
+      key: string;
+      value: any;
+    }
+    const { data: rawSettings } = await adminClient
+      .from("platform_settings")
+      .select("key, value");
+    const settings = (rawSettings as unknown as SettingItem[]) || null;
+
+    if (settings) {
+      const priceSetting = settings.find((s) => s.key === "pro_subscription_price");
+      if (priceSetting?.value) {
+        const val = priceSetting.value as { amount?: number; currency?: string };
+        if (val.amount !== undefined) {
+          proPriceFormatted = `₦${val.amount.toLocaleString()}`;
+        }
+      }
+
+      const limitSetting = settings.find((s) => s.key === "free_tier_listing_limit");
+      if (limitSetting?.value) {
+        const val = limitSetting.value as { limit?: number };
+        if (val.limit !== undefined) {
+          freeLimit = val.limit;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("Could not fetch live pricing settings, using defaults:", err);
+  }
+
+  const dynamicFreeFeatures = [
+    `Up to ${freeLimit} product/service listings`,
+    "Basic business profile",
+    "Public search visibility",
+    "Contact via phone/email",
+    "WhatsApp deep-link",
+    "30-day full-access trial included",
+  ];
+
   return (
     <>
       {/* JSON-LD Structured Data */}
@@ -128,7 +173,7 @@ export default function PricingPage() {
                   After your 30-day free trial ends
                 </p>
                 <ul className="space-y-3 mb-8">
-                  {freeFeatures.map((feature) => (
+                  {dynamicFreeFeatures.map((feature) => (
                     <li key={feature} className="flex items-start gap-3">
                       <Check className="h-5 w-5 text-accent-success shrink-0 mt-0.5" />
                       <span className="text-sm text-gray-700">{feature}</span>
@@ -152,7 +197,7 @@ export default function PricingPage() {
                   <p className="text-gray-500">For growing businesses</p>
                 </div>
                 <div className="mb-6">
-                  <span className="text-5xl font-bold text-brand-navy">₦5,000</span>
+                  <span className="text-5xl font-bold text-brand-navy">{proPriceFormatted}</span>
                   <span className="text-gray-500 ml-2">/month</span>
                 </div>
                 <p className="text-sm text-gray-500 mb-6">

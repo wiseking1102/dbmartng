@@ -56,40 +56,49 @@ export async function GET(request: Request) {
     .eq("id", user.id)
     .single();
 
-  let role = profile?.role;
+  let userRole = profile?.role;
 
-  if (!role && user.user_metadata?.role) {
-    role = user.user_metadata.role;
-    await supabase
-      .from("users")
-      .update({ role })
-      .eq("id", user.id);
-  }
-
-  if (!role) {
-    const { data: vendorProfile } = await supabase
-      .from("vendor_profiles")
-      .select("id")
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    if (vendorProfile) {
-      role = "vendor";
-      await supabase
-        .from("users")
-        .update({ role: "vendor" })
-        .eq("id", user.id);
+  // If no profile exists, create one using admin client
+  if (!profile) {
+    const type = searchParams.get("type") || "buyer";
+    const roleToCreate = ["buyer", "vendor"].includes(type) ? type : "buyer";
+    
+    try {
+      const { createAdminClient } = await import("@/lib/supabase/admin");
+      const adminClient = createAdminClient();
+      
+      const { error: insertError } = await adminClient.from("users").insert({
+        id: user.id,
+        email: user.email || null,
+        phone: user.phone || null,
+        role: roleToCreate,
+        full_name: user.user_metadata?.full_name || null,
+      } as never);
+      
+      if (!insertError) {
+        userRole = roleToCreate;
+      } else {
+        console.error("Failed to create user in callback:", insertError);
+      }
+    } catch (err) {
+      console.error("Admin client error in callback:", err);
     }
   }
 
-  if (role === "admin" || role === "sub_admin") {
+  // Redirect based on role from users table
+  if (userRole === "admin" || userRole === "sub_admin") {
     return NextResponse.redirect(`${origin}/dashboard/admin`);
   }
 
-  if (role === "vendor") {
+  if (userRole === "vendor") {
     return NextResponse.redirect(`${origin}/dashboard/vendor`);
   }
 
+  if (userRole === "buyer") {
+    return NextResponse.redirect(`${origin}/dashboard/buyer`);
+  }
+
+  // Fallback: check admin allowlist for legacy admin detection
   if (user.email) {
     try {
       const { data: allowlistEntry } = await supabase
