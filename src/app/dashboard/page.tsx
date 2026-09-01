@@ -5,22 +5,44 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { Loader2 } from "lucide-react";
 
+type UserRole = "buyer" | "vendor" | "admin" | "sub_admin";
+
+const ROLE_ROUTES: Record<UserRole, string> = {
+  buyer: "/dashboard/buyer",
+  vendor: "/dashboard/vendor",
+  admin: "/dashboard/admin",
+  sub_admin: "/dashboard/admin",
+};
+
+function isValidRole(role: unknown): role is UserRole {
+  return (
+    role === "buyer" ||
+    role === "vendor" ||
+    role === "admin" ||
+    role === "sub_admin"
+  );
+}
+
 export default function DashboardRootPage() {
   const { user, role, loading } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
-    if (!loading) {
-      if (!user) {
-        router.replace("/auth");
-      } else if (role === "admin" || role === "sub_admin") {
-        router.replace("/dashboard/admin");
-      } else if (role === "vendor") {
-        router.replace("/dashboard/vendor");
-      } else {
-        router.replace("/dashboard/buyer");
-      }
+    if (loading) return;
+
+    // Not authenticated
+    if (!user) {
+      router.replace("/auth");
+      return;
     }
+
+    // Never guess a user's role.
+    if (!isValidRole(role)) {
+      router.replace("/account");
+      return;
+    }
+
+    router.replace(ROLE_ROUTES[role]);
   }, [user, role, loading, router]);
 
   return (
