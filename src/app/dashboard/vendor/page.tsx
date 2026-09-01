@@ -35,29 +35,86 @@ interface VendorStats {
 export default function VendorDashboardPage() {
   const { user, role, loading, signOut } = useAuth();
   const router = useRouter();
+
   const [stats, setStats] = useState<VendorStats | null>(null);
 
+  /*
+   * VENDOR-ONLY ACCESS
+   *
+   * Admins and sub-admins must NOT be allowed to use
+   * the vendor dashboard.
+   */
   useEffect(() => {
-    if (!loading && (!user || (role !== "vendor" && role !== "admin" && role !== "sub_admin"))) {
-      router.push("/auth");
+    if (loading) return;
+
+    // Not authenticated
+    if (!user) {
+      router.replace("/auth");
+      return;
+    }
+
+    // Authenticated but not a vendor
+    if (role !== "vendor") {
+      if (role === "admin" || role === "sub_admin") {
+        router.replace("/dashboard/admin");
+      } else if (role === "buyer") {
+        router.replace("/dashboard/buyer");
+      } else {
+        router.replace("/account");
+      }
     }
   }, [user, role, loading, router]);
 
+  /*
+   * Only vendors are allowed to request vendor statistics.
+   */
   useEffect(() => {
-    if (user && (role === "vendor" || role === "admin" || role === "sub_admin")) {
-      fetch("/api/vendor/stats")
-        .then((r) => r.json())
-        .then((json) => {
-          if (json.success) setStats(json.data);
-        })
-        .catch(() => {});
+    if (loading || !user || role !== "vendor") {
+      return;
     }
-  }, [user, role]);
 
-  if (loading) {
+    let cancelled = false;
+
+    const loadStats = async () => {
+      try {
+        const response = await fetch("/api/vendor/stats", {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          cache: "no-store",
+        });
+
+        if (!response.ok) {
+          return;
+        }
+
+        const json = await response.json();
+
+        if (!cancelled && json?.success) {
+          setStats(json.data);
+        }
+      } catch {
+        // Keep dashboard usable even if stats fail to load.
+      }
+    };
+
+    loadStats();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user, role, loading]);
+
+  /*
+   * Do not render vendor content while the user's role
+   * is still being resolved or when the user isn't a vendor.
+   */
+  if (loading || !user || role !== "vendor") {
     return (
       <>
         <Header />
+
         <div className="pt-20 min-h-screen flex items-center justify-center">
           <div className="animate-pulse-soft text-brand-navy font-semibold">
             Loading vendor dashboard...
@@ -104,6 +161,7 @@ export default function VendorDashboardPage() {
   return (
     <>
       <Header />
+
       <main className="pt-20 min-h-screen bg-surface-secondary">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
           <StaggerEntrance>
@@ -113,23 +171,27 @@ export default function VendorDashboardPage() {
                 <h1 className="text-2xl sm:text-3xl font-bold text-brand-navy font-display">
                   Vendor Dashboard
                 </h1>
+
                 <p className="text-gray-500">
                   Manage your business profile, listings, and performance
                 </p>
               </div>
-              <div className="flex gap-3">
+
+              <div className="flex flex-wrap gap-3">
                 <Link href="/dashboard/vendor/listings/new">
                   <Button variant="primary" size="sm">
                     <Plus className="h-4 w-4" />
                     Add Listing
                   </Button>
                 </Link>
+
                 <Link href="/">
                   <Button variant="outline" size="sm">
                     <Store className="h-4 w-4" />
                     View Public Profile
                   </Button>
                 </Link>
+
                 <Button variant="ghost" size="sm" onClick={signOut}>
                   <LogOut className="h-4 w-4" />
                   Sign Out
@@ -139,31 +201,51 @@ export default function VendorDashboardPage() {
 
             {/* Trial / Subscription Alert */}
             {(isTrial || isFree) && (
-              <div className={`mb-6 p-4 rounded-2xl border ${
-                isTrial 
-                  ? "bg-amber-50 border-amber-200" 
-                  : "bg-blue-50 border-blue-200"
-              }`}>
+              <div
+                className={`mb-6 p-4 rounded-2xl border ${
+                  isTrial
+                    ? "bg-amber-50 border-amber-200"
+                    : "bg-blue-50 border-blue-200"
+                }`}
+              >
                 <div className="flex items-center gap-3">
                   {isTrial ? (
                     <Clock className="h-5 w-5 text-amber-600" />
                   ) : (
                     <AlertTriangle className="h-5 w-5 text-blue-600" />
                   )}
+
                   <div className="flex-1">
-                    <p className={`font-semibold ${isTrial ? "text-amber-800" : "text-blue-800"}`}>
-                      {isTrial 
-                        ? "Your free trial is active" 
+                    <p
+                      className={`font-semibold ${
+                        isTrial ? "text-amber-800" : "text-blue-800"
+                      }`}
+                    >
+                      {isTrial
+                        ? "Your free trial is active"
                         : "You're on the Free plan"}
                     </p>
-                    <p className={`text-sm ${isTrial ? "text-amber-600" : "text-blue-600"}`}>
+
+                    <p
+                      className={`text-sm ${
+                        isTrial ? "text-amber-600" : "text-blue-600"
+                      }`}
+                    >
                       {isTrial && stats?.trialEndsAt
-                        ? `Trial ends ${new Date(stats.trialEndsAt).toLocaleDateString("en-NG")}. Upgrade to Pro for unlimited listings.`
+                        ? `Trial ends ${new Date(
+                            stats.trialEndsAt
+                          ).toLocaleDateString(
+                            "en-NG"
+                          )}. Upgrade to Pro for unlimited listings.`
                         : "Upgrade to Pro to unlock unlimited listings, analytics, and featured placement."}
                     </p>
                   </div>
+
                   <Link href="/dashboard/vendor/subscription">
-                    <Button variant={isTrial ? "gold" : "primary"} size="sm">
+                    <Button
+                      variant={isTrial ? "gold" : "primary"}
+                      size="sm"
+                    >
                       {isTrial ? "Upgrade to Pro" : "Go Pro"}
                     </Button>
                   </Link>
@@ -173,43 +255,67 @@ export default function VendorDashboardPage() {
 
             {/* Stats */}
             <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+              {/* Profile Views */}
               <div className="glass rounded-2xl p-6">
                 <div className="flex items-center justify-between mb-4">
                   <Eye className="h-5 w-5 text-brand-gold" />
                 </div>
+
                 <div className="text-2xl font-bold text-brand-navy">
                   {stats?.profileViews?.toLocaleString() ?? "—"}
                 </div>
-                <div className="text-sm text-gray-500">Profile Views</div>
+
+                <div className="text-sm text-gray-500">
+                  Profile Views
+                </div>
               </div>
+
+              {/* Listing Views */}
               <div className="glass rounded-2xl p-6">
                 <div className="flex items-center justify-between mb-4">
                   <TrendingUp className="h-5 w-5 text-brand-gold" />
                 </div>
+
                 <div className="text-2xl font-bold text-brand-navy">
                   {stats?.listingViews?.toLocaleString() ?? "—"}
                 </div>
-                <div className="text-sm text-gray-500">Listing Views</div>
+
+                <div className="text-sm text-gray-500">
+                  Listing Views
+                </div>
               </div>
+
+              {/* Active Listings */}
               <div className="glass rounded-2xl p-6">
                 <div className="flex items-center justify-between mb-4">
                   <Package className="h-5 w-5 text-brand-gold" />
                 </div>
+
                 <div className="text-2xl font-bold text-brand-navy">
                   {stats?.totalListings?.toLocaleString() ?? "—"}
                 </div>
-                <div className="text-sm text-gray-500">Active Listings</div>
+
+                <div className="text-sm text-gray-500">
+                  Active Listings
+                </div>
               </div>
+
+              {/* Plan Status */}
               <div className="glass rounded-2xl p-6">
                 <div className="flex items-center justify-between mb-4">
                   <CheckCircle className="h-5 w-5 text-brand-gold" />
                 </div>
+
                 <div className="text-2xl font-bold text-brand-navy">
-                  {stats?.subscriptionStatus 
-                    ? stats.subscriptionStatus.charAt(0).toUpperCase() + stats.subscriptionStatus.slice(1)
+                  {stats?.subscriptionStatus
+                    ? stats.subscriptionStatus.charAt(0).toUpperCase() +
+                      stats.subscriptionStatus.slice(1)
                     : "—"}
                 </div>
-                <div className="text-sm text-gray-500">Plan Status</div>
+
+                <div className="text-sm text-gray-500">
+                  Plan Status
+                </div>
               </div>
             </div>
 
@@ -225,16 +331,21 @@ export default function VendorDashboardPage() {
                     <div className="w-12 h-12 rounded-xl bg-brand-navy/5 flex items-center justify-center group-hover:bg-brand-navy/10 transition-colors">
                       <action.icon className="h-6 w-6 text-brand-navy" />
                     </div>
+
                     {action.count > 0 && (
                       <span className="bg-brand-gold text-brand-navy text-xs font-bold px-2 py-1 rounded-full">
                         {action.count}
                       </span>
                     )}
                   </div>
+
                   <h3 className="font-bold text-brand-navy mb-1">
                     {action.title}
                   </h3>
-                  <p className="text-sm text-gray-500">{action.description}</p>
+
+                  <p className="text-sm text-gray-500">
+                    {action.description}
+                  </p>
                 </Link>
               ))}
             </div>
@@ -244,9 +355,12 @@ export default function VendorDashboardPage() {
               <h2 className="text-xl sm:text-2xl font-bold text-brand-navy font-display mb-3">
                 Complete Your Profile
               </h2>
+
               <p className="text-gray-600 mb-6 max-w-lg mx-auto">
-                A complete profile gets 3x more views. Add your logo, cover image, business hours, and social links.
+                A complete profile gets 3x more views. Add your logo, cover
+                image, business hours, and social links.
               </p>
+
               <Link href="/dashboard/vendor/settings">
                 <Button variant="primary" size="lg">
                   <Settings className="h-5 w-5" />
