@@ -14,16 +14,13 @@ import {
   Shield,
   CreditCard,
   Settings,
-  Star,
   BarChart3,
-  MessageSquare,
   FileText,
   LogOut,
   CheckCircle,
   XCircle,
-  TrendingUp,
-  AlertTriangle,
   Megaphone,
+  AlertTriangle,
 } from "lucide-react";
 
 interface LiveStats {
@@ -42,13 +39,16 @@ export default function AdminDashboardPage() {
   const [liveStats, setLiveStats] = useState<LiveStats | null>(null);
 
   useEffect(() => {
-    if (!loading && (!user || role !== "admin")) {
+    if (
+      !loading &&
+      (!user || (role !== "admin" && role !== "sub_admin"))
+    ) {
       router.push("/auth");
     }
   }, [user, role, loading, router]);
 
   useEffect(() => {
-    if (user && role === "admin") {
+    if (user && (role === "admin" || role === "sub_admin")) {
       fetch("/api/admin/analytics")
         .then((r) => r.json())
         .then((json) => {
@@ -58,9 +58,12 @@ export default function AdminDashboardPage() {
               activeListings: json.data.overview.activeListings,
               proSubscriptions: json.data.overview.proSubscriptions,
               pendingReviews: json.data.overview.pendingReviews,
-              newVendorsThisWeek: json.data.trends.newVendorsThisWeek,
-              newListingsThisWeek: json.data.trends.newListingsThisWeek,
-              monthlyRevenue: json.data.revenue.monthlyEstimateNaira,
+              newVendorsThisWeek:
+                json.data.trends.newVendorsThisWeek,
+              newListingsThisWeek:
+                json.data.trends.newListingsThisWeek,
+              monthlyRevenue:
+                json.data.revenue.monthlyEstimateNaira,
             });
           }
         })
@@ -72,6 +75,7 @@ export default function AdminDashboardPage() {
     return (
       <>
         <Header />
+
         <div className="pt-20 min-h-screen flex items-center justify-center">
           <div className="animate-pulse-soft text-brand-navy font-semibold">
             Loading admin panel...
@@ -169,138 +173,185 @@ export default function AdminDashboardPage() {
     {
       label: "Total Vendors",
       value: liveStats?.totalVendors.toLocaleString() ?? "—",
-      change: liveStats ? `+${liveStats.newVendorsThisWeek} this week` : "",
+      change: liveStats
+        ? `+${liveStats.newVendorsThisWeek} this week`
+        : "",
       icon: Store,
-      trend: liveStats && liveStats.newVendorsThisWeek > 0 ? "up" : "neutral",
+      trend:
+        liveStats && liveStats.newVendorsThisWeek > 0
+          ? "up"
+          : "neutral",
     },
     {
       label: "Active Listings",
       value: liveStats?.activeListings.toLocaleString() ?? "—",
-      change: liveStats ? `+${liveStats.newListingsThisWeek} this week` : "",
+      change: liveStats
+        ? `+${liveStats.newListingsThisWeek} this week`
+        : "",
       icon: Package,
-      trend: liveStats && liveStats.newListingsThisWeek > 0 ? "up" : "neutral",
+      trend:
+        liveStats && liveStats.newListingsThisWeek > 0
+          ? "up"
+          : "neutral",
     },
     {
       label: "Pro Subscriptions",
-      value: liveStats?.proSubscriptions.toLocaleString() ?? "—",
-      change: liveStats ? `₦${liveStats.monthlyRevenue.toLocaleString()}/mo` : "",
+      value:
+        liveStats?.proSubscriptions.toLocaleString() ?? "—",
+      change: liveStats
+        ? `₦${liveStats.monthlyRevenue.toLocaleString()}/mo`
+        : "",
       icon: CreditCard,
       trend: "up",
     },
     {
       label: "Pending Reviews",
-      value: liveStats?.pendingReviews.toLocaleString() ?? "—",
-      change: liveStats && liveStats.pendingReviews > 0 ? "Needs attention" : "All clear",
+      value:
+        liveStats?.pendingReviews.toLocaleString() ?? "—",
+      change:
+        liveStats && liveStats.pendingReviews > 0
+          ? "Needs attention"
+          : "All clear",
       icon: CheckCircle,
-      trend: liveStats && liveStats.pendingReviews > 0 ? "neutral" : "up",
+      trend:
+        liveStats && liveStats.pendingReviews > 0
+          ? "neutral"
+          : "up",
     },
   ];
 
   return (
     <>
       <Header />
+
       <main className="pt-20 min-h-screen bg-surface-secondary">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
           <StaggerEntrance>
-          {/* Header */}
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-8">
-            <div>
-              <h1 className="text-2xl sm:text-3xl font-bold text-brand-navy font-display">
-                Admin Panel
-              </h1>
-              <p className="text-gray-500">
-                Platform management and oversight
-              </p>
-            </div>
-            <div className="flex gap-3">
-              <Link href="/">
-                <Button variant="outline" size="sm">
-                  View Site
-                </Button>
-              </Link>
-              <Button variant="ghost" size="sm" onClick={signOut}>
-                <LogOut className="h-4 w-4" />
-                Sign Out
-              </Button>
-            </div>
-          </div>
+            {/* Header */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-8">
+              <div>
+                <h1 className="text-2xl sm:text-3xl font-bold text-brand-navy font-display">
+                  Admin Panel
+                </h1>
 
-          {/* Stats */}
-          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-            {stats.map((stat) => (
-              <div key={stat.label} className="glass rounded-2xl p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <stat.icon className="h-5 w-5 text-brand-gold" />
-                  <span
-                    className={`text-xs font-semibold ${
-                      stat.trend === "up"
-                        ? "text-accent-success"
-                        : "text-accent-warning"
-                    }`}
-                  >
-                    {stat.change}
-                  </span>
-                </div>
-                <div className="text-2xl font-bold text-brand-navy">
-                  {stat.value}
-                </div>
-                <div className="text-sm text-gray-500">{stat.label}</div>
+                <p className="text-gray-500">
+                  Platform management and oversight
+                </p>
               </div>
-            ))}
-          </div>
 
-          {/* Admin Modules Grid */}
-          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {adminModules.map((module) => (
-              <Link
-                key={module.title}
-                href={module.href}
-                className="glass rounded-2xl p-6 hover:-translate-y-1 hover:shadow-lg transition-all group"
-              >
-                <div className="flex items-center justify-between mb-4">
-                  <div
-                    className={`w-12 h-12 rounded-xl ${module.bg} flex items-center justify-center group-hover:opacity-80 transition-opacity`}
-                  >
-                    <module.icon className={`h-6 w-6 ${module.color}`} />
-                  </div>
-                  {module.count && (
-                    <span className="bg-brand-gold text-brand-navy text-xs font-bold px-2 py-1 rounded-full min-w-[24px] text-center">
-                      {module.count}
-                    </span>
-                  )}
-                </div>
-                <h3 className="font-bold text-brand-navy mb-1">
-                  {module.title}
-                </h3>
-                <p className="text-sm text-gray-500">{module.description}</p>
-              </Link>
-            ))}
-          </div>
+              <div className="flex gap-3">
+                <Link href="/">
+                  <Button variant="outline" size="sm">
+                    View Site
+                  </Button>
+                </Link>
 
-          {/* Quick Actions */}
-          <div className="mt-8 glass rounded-2xl p-6">
-            <h3 className="font-bold text-brand-navy mb-4">
-              Quick Actions
-            </h3>
-            <div className="flex flex-wrap gap-3">
-              <Button variant="primary" size="sm">
-                <CheckCircle className="h-4 w-4" />
-                Approve Selected
-              </Button>
-              <Button variant="danger" size="sm">
-                <XCircle className="h-4 w-4" />
-                Reject Selected
-              </Button>
-              <Button variant="outline" size="sm">
-                <BarChart3 className="h-4 w-4" />
-                Export Report
-              </Button>
-              <Button variant="gold" size="sm">
-                <Settings className="h-4 w-4" />
-                Platform Settings
-              </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={signOut}
+                >
+                  <LogOut className="h-4 w-4" />
+                  Sign Out
+                </Button>
+              </div>
             </div>
-          </div>
+
+            {/* Stats */}
+            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+              {stats.map((stat) => (
+                <div
+                  key={stat.label}
+                  className="glass rounded-2xl p-6"
+                >
+                  <div className="flex items-center justify-between mb-4">
+                    <stat.icon className="h-5 w-5 text-brand-gold" />
+
+                    <span
+                      className={`text-xs font-semibold ${
+                        stat.trend === "up"
+                          ? "text-accent-success"
+                          : "text-accent-warning"
+                      }`}
+                    >
+                      {stat.change}
+                    </span>
+                  </div>
+
+                  <div className="text-2xl font-bold text-brand-navy">
+                    {stat.value}
+                  </div>
+
+                  <div className="text-sm text-gray-500">
+                    {stat.label}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Admin Modules Grid */}
+            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {adminModules.map((module) => (
+                <Link
+                  key={module.title}
+                  href={module.href}
+                  className="glass rounded-2xl p-6 hover:-translate-y-1 hover:shadow-lg transition-all group"
+                >
+                  <div className="flex items-center justify-between mb-4">
+                    <div
+                      className={`w-12 h-12 rounded-xl ${module.bg} flex items-center justify-center group-hover:opacity-80 transition-opacity`}
+                    >
+                      <module.icon
+                        className={`h-6 w-6 ${module.color}`}
+                      />
+                    </div>
+
+                    {module.count && (
+                      <span className="bg-brand-gold text-brand-navy text-xs font-bold px-2 py-1 rounded-full min-w-[24px] text-center">
+                        {module.count}
+                      </span>
+                    )}
+                  </div>
+
+                  <h3 className="font-bold text-brand-navy mb-1">
+                    {module.title}
+                  </h3>
+
+                  <p className="text-sm text-gray-500">
+                    {module.description}
+                  </p>
+                </Link>
+              ))}
+            </div>
+
+            {/* Quick Actions */}
+            <div className="mt-8 glass rounded-2xl p-6">
+              <h3 className="font-bold text-brand-navy mb-4">
+                Quick Actions
+              </h3>
+
+              <div className="flex flex-wrap gap-3">
+                <Button variant="primary" size="sm">
+                  <CheckCircle className="h-4 w-4" />
+                  Approve Selected
+                </Button>
+
+                <Button variant="danger" size="sm">
+                  <XCircle className="h-4 w-4" />
+                  Reject Selected
+                </Button>
+
+                <Button variant="outline" size="sm">
+                  <BarChart3 className="h-4 w-4" />
+                  Export Report
+                </Button>
+
+                <Button variant="gold" size="sm">
+                  <Settings className="h-4 w-4" />
+                  Platform Settings
+                </Button>
+              </div>
+            </div>
           </StaggerEntrance>
         </div>
       </main>
