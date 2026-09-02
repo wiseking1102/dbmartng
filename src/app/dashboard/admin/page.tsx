@@ -43,15 +43,19 @@ export default function AdminDashboardPage() {
       !loading &&
       (!user || (role !== "admin" && role !== "sub_admin"))
     ) {
-      router.push("/auth");
+      router.replace("/auth");
     }
   }, [user, role, loading, router]);
 
   useEffect(() => {
     if (user && (role === "admin" || role === "sub_admin")) {
+      let cancelled = false;
+
       fetch("/api/admin/analytics")
         .then((r) => r.json())
         .then((json) => {
+          if (cancelled) return;
+
           if (json.success) {
             setLiveStats({
               totalVendors: json.data.overview.totalVendors,
@@ -68,6 +72,10 @@ export default function AdminDashboardPage() {
           }
         })
         .catch(() => {});
+
+      return () => {
+        cancelled = true;
+      };
     }
   }, [user, role]);
 
@@ -83,6 +91,13 @@ export default function AdminDashboardPage() {
         </div>
       </>
     );
+  }
+
+  if (
+    !user ||
+    (role !== "admin" && role !== "sub_admin")
+  ) {
+    return null;
   }
 
   const adminModules = [
@@ -103,6 +118,15 @@ export default function AdminDashboardPage() {
       count: "28",
       color: "text-brand-gold",
       bg: "bg-brand-gold/10",
+    },
+    {
+      title: "Manual Payments",
+      description: "Review and approve manual OPay payment requests",
+      icon: CreditCard,
+      href: "/dashboard/admin/payments",
+      count: "",
+      color: "text-accent-success",
+      bg: "bg-accent-success/5",
     },
     {
       title: "Sub-Admin Management",
@@ -346,10 +370,19 @@ export default function AdminDashboardPage() {
                   Export Report
                 </Button>
 
-                <Button variant="gold" size="sm">
-                  <Settings className="h-4 w-4" />
-                  Platform Settings
-                </Button>
+                <Link href="/dashboard/admin/settings">
+                  <Button variant="gold" size="sm">
+                    <Settings className="h-4 w-4" />
+                    Platform Settings
+                  </Button>
+                </Link>
+
+                <Link href="/dashboard/admin/payments">
+                  <Button variant="outline" size="sm">
+                    <CreditCard className="h-4 w-4" />
+                    Review Payments
+                  </Button>
+                </Link>
               </div>
             </div>
           </StaggerEntrance>
