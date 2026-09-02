@@ -1,3549 +1,2135 @@
 "use client";
 
-import {
-  useState,
-  useEffect,
-  useCallback,
-  type FormEvent,
-} from "react";
-import { useRouter } from "next/navigation";
-import Link from "next/link";
-import { Header } from "@/components/layout/header";
-import { Button } from "@/components/ui/button";
-import { useAuth } from "@/hooks/useAuth";
-import StaggerEntrance from "@/components/animations/StaggerEntrance";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { formatNaira } from "@/lib/utils";
-import { toast } from "sonner";
-import {
-  Package,
-  Plus,
-  Eye,
-  Edit3,
-  Trash2,
-  Search,
-  X,
-  CheckCircle,
-  Clock,
-  AlertTriangle,
-  XCircle,
-  ChevronLeft,
-  Image as ImageIcon,
-  Loader2,
-  Tag,
-  Wrench,
-} from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
 
-type ListingStatus =
-  | "pending_review"
-  | "approved"
-  | "rejected"
-  | "flagged";
+type ListingStatus = "pending_review" | "approved" | "rejected" | "flagged";
 
-type CategoryType = "goods" | "service";
+type Listing = {
+  id: string;
+  vendor_id: string;
+  category_id: string | null;
+  title: string;
+  description: string;
+  price: number | null;
+  price_period: string | null;
+  is_service: boolean;
+  tags: string[] | null;
+  status: ListingStatus;
+  status_reason: string | null;
+  created_at: string;
+  updated_at: string;
+  categories?: {
+    id: string;
+    name: string;
+    type: "goods" | "services";
+  } | null;
+};
 
-interface Category {
+type Category = {
   id: string;
   name: string;
   slug: string;
-  type: CategoryType;
+  type: "goods" | "services";
   description: string | null;
-  sort_order: number;
+  sort_order: number | null;
   is_active: boolean;
-}
-
-interface Listing {
-  id: string;
-  title: string;
-  slug: string;
-  description: string | null;
-  price: number | null;
-  price_period: string | null;
-  category_id: string | null;
-  image_urls: string[];
-  status: ListingStatus;
-  status_reason: string | null;
-  is_service: boolean;
-  tags: string[];
-  view_count: number;
-  contact_click_count: number;
-  created_at: string;
-  updated_at: string;
-}
-
-const STATUS_CONFIG: Record<
-  ListingStatus,
-  {
-    label: string;
-    color: string;
-    icon: typeof Clock;
-  }
-> = {
-  pending_review: {
-    label: "Pending Review",
-    color:
-      "text-accent-warning bg-accent-warning/10 border-accent-warning/20",
-    icon: Clock,
-  },
-  approved: {
-    label: "Approved",
-    color:
-      "text-accent-success bg-accent-success/10 border-accent-success/20",
-    icon: CheckCircle,
-  },
-  rejected: {
-    label: "Rejected",
-    color:
-      "text-accent-error bg-accent-error/10 border-accent-error/20",
-    icon: XCircle,
-  },
-  flagged: {
-    label: "Flagged",
-    color:
-      "text-accent-error bg-accent-error/10 border-accent-error/20",
-    icon: AlertTriangle,
-  },
 };
+
+type FormState = {
+  title: string;
+  description: string;
+  price: string;
+  pricePeriod: string;
+  categoryId: string;
+  isService: boolean;
+  tags: string;
+};
+
+const EMPTY_FORM: FormState = {
+  title: "",
+  description: "",
+  price: "",
+  pricePeriod: "",
+  categoryId: "",
+  isService: false,
+  tags: "",
+};
+
+const supabase = createClient();
+
+function formatPrice(price: number | null) {
+  if (price === null || Number.isNaN(price)) {
+    return "Negotiable";
+  }
+
+  return `₦${new Intl.NumberFormat("en-NG").format(price)}`;
+}
+
+function formatDate(date: string) {
+  const value = new Date(date);
+
+  if (Number.isNaN(value.getTime())) {
+    return "";
+  }
+
+  return value.toLocaleDateString("en-NG", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function statusLabel(status: ListingStatus) {
+  switch (status) {
+    case "approved":
+      return "Approved";
+    case "rejected":
+      return "Rejected";
+    case "flagged":
+      return "Flagged";
+    default:
+      return "Pending review";
+  }
+}
+
+function statusClass(status: ListingStatus) {
+  switch (status) {
+    case "approved":
+      return "bg-emerald-50 text-emerald-700 border-emerald-200";
+    case "rejected":
+      return "bg-red-50 text-red-700 border-red-200";
+    case "flagged":
+      return "bg-amber-50 text-amber-700 border-amber-200";
+    default:
+      return "bg-blue-50 text-blue-700 border-blue-200";
+  }
+}
 
 export default function VendorListingsPage() {
   const { user, role, loading: authLoading } = useAuth();
-  const router = useRouter();
-  const supabase = createClient();
 
   const [listings, setListings] = useState<Listing[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
 
   const [loading, setLoading] = useState(true);
-  const [categoriesLoading, setCategoriesLoading] =
-    useState(true);
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const [error, setError] = useState<string | null>(
-    null
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | ListingStatus>(
+    "all"
   );
 
-  const [searchQuery, setSearchQuery] =
-    useState("");
+  const [showModal, setShowModal] = useState(false);
+  const [editingListing, setEditingListing] = useState<Listing | null>(null);
+  const [form, setForm] = useState<FormState>(EMPTY_FORM);
 
-  const [statusFilter, setStatusFilter] =
-    useState<ListingStatus | "all">("all");
+  const isVendor = role === "vendor";
 
-  const [typeFilter, setTypeFilter] =
-    useState<"all" | "goods" | "service">("all");
+  const loadCategories = useCallback(async (signal?: AbortSignal) => {
+    const { data, error: categoryError } = await supabase
+      .from("categories")
+      .select(
+        "id,name,slug,type,description,sort_order,is_active"
+      )
+      .eq("is_active", true)
+      .order("sort_order", { ascending: true })
+      .order("name", { ascending: true });
 
-  const [showModal, setShowModal] =
-    useState(false);
-
-  const [editingListing, setEditingListing] =
-    useState<Listing | null>(null);
-
-  const [saving, setSaving] = useState(false);
-
-  const [deleteConfirm, setDeleteConfirm] =
-    useState<string | null>(null);
-
-  const [formTitle, setFormTitle] =
-    useState("");
-
-  const [formDescription, setFormDescription] =
-    useState("");
-
-  const [formPrice, setFormPrice] =
-    useState("");
-
-  const [formPricePeriod, setFormPricePeriod] =
-    useState("");
-
-  const [formCategory, setFormCategory] =
-    useState("");
-
-  const [formIsService, setFormIsService] =
-    useState(false);
-
-  const [formTags, setFormTags] =
-    useState("");
-
-  /*
-   * Vendor-only guard.
-   */
-  useEffect(() => {
-    if (authLoading) return;
-
-    if (!user) {
-      router.replace("/auth?type=vendor");
+    if (signal?.aborted) {
       return;
     }
 
-    if (role !== "vendor") {
-      if (
-        role === "admin" ||
-        role === "sub_admin"
-      ) {
-        router.replace("/dashboard/admin");
-      } else if (role === "buyer") {
-        router.replace("/dashboard/buyer");
-      } else {
-        router.replace("/account");
-      }
+    if (categoryError) {
+      throw new Error(categoryError.message);
     }
-  }, [
-    user,
-    role,
-    authLoading,
-    router,
-  ]);
 
-  /*
-   * Get the current Supabase access token.
-   * The API now authenticates the vendor from
-   * this token rather than trusting a userId
-   * supplied by the browser.
-   */
-  const getAccessToken =
-    useCallback(async () => {
-      const {
-        data,
-        error,
-      } = await supabase.auth.getSession();
+    setCategories((data ?? []) as Category[]);
+  }, []);
 
-      if (
-        error ||
-        !data.session?.access_token
-      ) {
-        return null;
+  const getAccessToken = useCallback(async () => {
+    const {
+      data: { session },
+      error: sessionError,
+    } = await supabase.auth.getSession();
+
+    if (sessionError) {
+      throw new Error(sessionError.message);
+    }
+
+    if (!session?.access_token) {
+      throw new Error("Your session has expired. Please sign in again.");
+    }
+
+    return session.access_token;
+  }, []);
+
+  const loadListings = useCallback(
+    async (signal?: AbortSignal) => {
+      const token = await getAccessToken();
+
+      const response = await fetch("/api/vendor/listings", {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+        },
+        cache: "no-store",
+        signal,
+      });
+
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(
+          payload?.error || "Failed to load your listings."
+        );
       }
 
-      return data.session.access_token;
-    }, [supabase]);
-
-  /*
-   * Load real marketplace categories from Supabase.
-   */
-  const fetchCategories =
-    useCallback(async () => {
-      setCategoriesLoading(true);
-
-      try {
-        const {
-          data,
-          error: categoryError,
-        } = await supabase
-          .from("categories")
-          .select(
-            "id, name, slug, type, description, sort_order, is_active"
-          )
-          .eq("is_active", true)
-          .order("sort_order", {
-            ascending: true,
-          })
-          .order("name", {
-            ascending: true,
-          });
-
-        if (categoryError) {
-          console.error(
-            "Category fetch error:",
-            categoryError
-          );
-
-          setError(
-            "Unable to load marketplace categories."
-          );
-
-          return;
-        }
-
-        const normalized =
-          ((data || []) as Category[]).filter(
-            (category) =>
-              category.type === "goods" ||
-              category.type === "service"
-          );
-
-        setCategories(normalized);
-      } catch (err) {
-        console.error(
-          "Category loading error:",
-          err
-        );
-
-        setError(
-          "Unable to load marketplace categories."
-        );
-      } finally {
-        setCategoriesLoading(false);
+      if (signal?.aborted) {
+        return;
       }
-    }, [supabase]);
 
-  /*
-   * Load vendor listings.
-   */
-  const fetchListings =
-    useCallback(async () => {
-      if (!user) return;
+      setListings((payload?.listings ?? []) as Listing[]);
+    },
+    [getAccessToken]
+  );
+
+  const loadData = useCallback(
+    async (signal?: AbortSignal) => {
+      if (!isVendor || !user) {
+        return;
+      }
 
       setLoading(true);
-      setError(null);
+      setError("");
 
       try {
-        const token =
-          await getAccessToken();
-
-        if (!token) {
-          setError(
-            "Your session has expired. Please sign in again."
-          );
-
-          router.replace(
-            "/auth?type=vendor"
-          );
-
-          return;
-        }
-
-        const response =
-          await fetch(
-            "/api/vendor/listings",
-            {
-              method: "GET",
-              headers: {
-                Authorization:
-                  `Bearer ${token}`,
-              },
-              cache: "no-store",
-            }
-          );
-
-        const result =
-          await response.json();
-
-        if (
-          response.status === 401
-        ) {
-          router.replace(
-            "/auth?type=vendor"
-          );
-          return;
-        }
-
-        if (!response.ok) {
-          throw new Error(
-            result.error ||
-              "Failed to fetch listings"
-          );
-        }
-
-        if (result.success) {
-          setListings(
-            (result.data ||
-              []) as Listing[]
-          );
-        } else {
-          throw new Error(
-            result.error ||
-              "Failed to fetch listings"
-          );
-        }
+        await Promise.all([
+          loadListings(signal),
+          loadCategories(signal),
+        ]);
       } catch (err) {
-        console.error(
-          "Listings fetch error:",
-          err
-        );
+        if (signal?.aborted) {
+          return;
+        }
 
         setError(
           err instanceof Error
             ? err.message
-            : "Failed to load listings"
+            : "Unable to load your listings."
         );
       } finally {
-        setLoading(false);
+        if (!signal?.aborted) {
+          setLoading(false);
+        }
       }
-    }, [
-      user,
-      getAccessToken,
-      router,
-    ]);
+    },
+    [isVendor, user, loadListings, loadCategories]
+  );
 
   useEffect(() => {
-    if (
-      authLoading ||
-      !user ||
-      role !== "vendor"
-    ) {
+    if (authLoading) {
       return;
     }
-
-    fetchListings();
-    fetchCategories();
-  }, [
-    authLoading,
-    user,
-    role,
-    fetchListings,
-    fetchCategories,
-  ]);
-
-  const resetForm = () => {
-    setEditingListing(null);
-    setFormTitle("");
-    setFormDescription("");
-    setFormPrice("");
-    setFormPricePeriod("");
-    setFormCategory("");
-    setFormIsService(false);
-    setFormTags("");
-  };
-
-  const openCreateModal = () => {
-    resetForm();
-    setError(null);
-    setShowModal(true);
-  };
-
-  const openEditModal = (
-    listing: Listing
-  ) => {
-    setEditingListing(listing);
-    setFormTitle(listing.title);
-    setFormDescription(
-      listing.description || ""
-    );
-    setFormPrice(
-      listing.price !== null
-        ? String(listing.price)
-        : ""
-    );
-    setFormPricePeriod(
-      listing.price_period || ""
-    );
-    setFormCategory(
-      listing.category_id || ""
-    );
-    setFormIsService(
-      listing.is_service
-    );
-    setFormTags(
-      (listing.tags || []).join(", ")
-    );
-    setError(null);
-    setShowModal(true);
-  };
-
-  /*
-   * Change the category list automatically
-   * when switching between products and services.
-   */
-  const handleTypeChange = (
-    isService: boolean
-  ) => {
-    setFormIsService(isService);
-
-    const currentCategory =
-      categories.find(
-        (category) =>
-          category.id ===
-          formCategory
-      );
-
-    if (
-      currentCategory &&
-      ((isService &&
-        currentCategory.type !==
-          "service") ||
-        (!isService &&
-          currentCategory.type !==
-            "goods"))
-    ) {
-      setFormCategory("");
-    }
-  };
-
-  const handleSave = async (
-    event: FormEvent<HTMLFormElement>
-  ) => {
-    event.preventDefault();
 
     if (!user) {
-      setError(
-        "You must be signed in as a vendor."
-      );
+      window.location.replace("/auth");
       return;
     }
 
-    const title =
-      formTitle.trim();
+    if (role === "admin" || role === "sub_admin") {
+      window.location.replace("/dashboard/admin");
+      return;
+    }
+
+    if (role === "buyer") {
+      window.location.replace("/dashboard/buyer");
+      return;
+    }
+
+    if (role !== "vendor") {
+      window.location.replace("/account");
+    }
+  }, [authLoading, user, role]);
+
+  useEffect(() => {
+    if (!authLoading && isVendor && user) {
+      const controller = new AbortController();
+
+      void loadData(controller.signal);
+
+      return () => {
+        controller.abort();
+      };
+    }
+  }, [authLoading, isVendor, user, loadData]);
+
+  const filteredListings = useMemo(() => {
+    const normalizedSearch = search.trim().toLowerCase();
+
+    return listings.filter((listing) => {
+      const matchesStatus =
+        statusFilter === "all" || listing.status === statusFilter;
+
+      if (!matchesStatus) {
+        return false;
+      }
+
+      if (!normalizedSearch) {
+        return true;
+      }
+
+      const haystack = [
+        listing.title,
+        listing.description,
+        listing.categories?.name ?? "",
+        ...(listing.tags ?? []),
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      return haystack.includes(normalizedSearch);
+    });
+  }, [listings, search, statusFilter]);
+
+  const stats = useMemo(
+    () => ({
+      total: listings.length,
+      approved: listings.filter((item) => item.status === "approved").length,
+      pending: listings.filter(
+        (item) => item.status === "pending_review"
+      ).length,
+      rejected: listings.filter((item) => item.status === "rejected").length,
+      flagged: listings.filter((item) => item.status === "flagged").length,
+    }),
+    [listings]
+  );
+
+  const visibleCategories = useMemo(
+    () =>
+      categories.filter(
+        (category) =>
+          category.type === (form.isService ? "services" : "goods")
+      ),
+    [categories, form.isService]
+  );
+
+  function resetForm() {
+    setForm(EMPTY_FORM);
+    setEditingListing(null);
+  }
+
+  function openCreateModal() {
+    resetForm();
+    setError("");
+    setSuccess("");
+    setShowModal(true);
+  }
+
+  function openEditModal(listing: Listing) {
+    setEditingListing(listing);
+
+    setForm({
+      title: listing.title ?? "",
+      description: listing.description ?? "",
+      price:
+        listing.price === null || listing.price === undefined
+          ? ""
+          : String(listing.price),
+      pricePeriod: listing.price_period ?? "",
+      categoryId: listing.category_id ?? "",
+      isService: Boolean(listing.is_service),
+      tags: (listing.tags ?? []).join(", "),
+    });
+
+    setError("");
+    setSuccess("");
+    setShowModal(true);
+  }
+
+  function closeModal() {
+    if (saving) {
+      return;
+    }
+
+    setShowModal(false);
+    resetForm();
+  }
+
+  function updateForm<K extends keyof FormState>(
+    key: K,
+    value: FormState[K]
+  ) {
+    setForm((current) => ({
+      ...current,
+      [key]: value,
+    }));
+  }
+
+  function handleTypeChange(isService: boolean) {
+    setForm((current) => ({
+      ...current,
+      isService,
+      categoryId: "",
+      pricePeriod: isService ? current.pricePeriod : "",
+    }));
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    setError("");
+    setSuccess("");
+
+    const title = form.title.trim();
+    const description = form.description.trim();
 
     if (!title) {
-      setError(
-        "Listing title is required."
-      );
+      setError("Please enter a listing title.");
       return;
     }
 
-    if (
-      formDescription.trim()
-        .length < 10
-    ) {
-      setError(
-        "Please provide a more detailed description."
-      );
+    if (!description) {
+      setError("Please enter a description.");
       return;
     }
 
-    if (
-      formPrice &&
-      (
-        !Number.isFinite(
-          Number(formPrice)
-        ) ||
-        Number(formPrice) < 0
-      )
-    ) {
-      setError(
-        "Please enter a valid price."
-      );
+    if (!form.categoryId) {
+      setError("Please select a category.");
       return;
     }
 
-    setSaving(true);
-    setError(null);
+    let price: number | null = null;
 
-    try {
-      const token =
-        await getAccessToken();
+    if (form.price.trim()) {
+      const parsedPrice = Number(form.price.replace(/,/g, "").trim());
 
-      if (!token) {
-        router.replace(
-          "/auth?type=vendor"
-        );
+      if (!Number.isFinite(parsedPrice) || parsedPrice < 0) {
+        setError("Please enter a valid price.");
         return;
       }
 
-      const tags =
-        formTags
-          .split(",")
-          .map((tag) =>
-            tag.trim()
-          )
-          .filter(Boolean)
-          .slice(0, 20);
+      price = parsedPrice;
+    }
 
-      const payload = {
-        listingId:
-          editingListing?.id,
+    const tags = form.tags
+      .split(",")
+      .map((tag) => tag.trim())
+      .filter(Boolean)
+      .slice(0, 20);
+
+    setSaving(true);
+
+    try {
+      const token = await getAccessToken();
+
+      const body = {
+        ...(editingListing ? { id: editingListing.id } : {}),
         title,
-        description:
-          formDescription.trim(),
-        price: formPrice
-          ? Number(formPrice)
-          : null,
-        pricePeriod:
-          formPricePeriod.trim() ||
-          null,
-        categoryId:
-          formCategory || null,
-        isService:
-          formIsService,
+        description,
+        price,
+        pricePeriod: form.pricePeriod.trim() || null,
+        categoryId: form.categoryId,
+        isService: form.isService,
         tags,
       };
 
-      const response =
-        await fetch(
-          "/api/vendor/listings",
-          {
-            method:
-              editingListing
-                ? "PUT"
-                : "POST",
-            headers: {
-              "Content-Type":
-                "application/json",
-              Authorization:
-                `Bearer ${token}`,
-            },
-            body:
-              JSON.stringify(
-                payload
-              ),
-          }
-        );
+      const response = await fetch("/api/vendor/listings", {
+        method: editingListing ? "PUT" : "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(body),
+      });
 
-      const result =
-        await response.json();
-
-      if (
-        response.status === 401
-      ) {
-        router.replace(
-          "/auth?type=vendor"
-        );
-        return;
-      }
+      const payload = await response.json().catch(() => null);
 
       if (!response.ok) {
         throw new Error(
-          result.error ||
-            "Failed to save listing"
+          payload?.error ||
+            (editingListing
+              ? "Failed to update listing."
+              : "Failed to create listing.")
         );
       }
+
+      setSuccess(
+        editingListing
+          ? "Listing updated and sent for review."
+          : "Listing created and sent for review."
+      );
 
       setShowModal(false);
       resetForm();
 
-      toast.success(
-        editingListing
-          ? "Listing updated and sent for re-review."
-          : "Listing created and submitted for review."
-      );
-
-      await fetchListings();
+      await loadListings();
     } catch (err) {
-      console.error(
-        "Save listing error:",
-        err
-      );
-
       setError(
         err instanceof Error
           ? err.message
-          : "Failed to save listing"
+          : "Something went wrong while saving the listing."
       );
     } finally {
       setSaving(false);
     }
-  };
+  }
 
-  const handleDelete = async (
-    listingId: string
-  ) => {
-    if (!user) return;
+  async function handleDelete(listing: Listing) {
+    const confirmed = window.confirm(
+      `Delete "${listing.title}"?\n\nThis action cannot be undone.`
+    );
 
-    setSaving(true);
-    setError(null);
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingId(listing.id);
+    setError("");
+    setSuccess("");
 
     try {
-      const token =
-        await getAccessToken();
+      const token = await getAccessToken();
 
-      if (!token) {
-        router.replace(
-          "/auth?type=vendor"
-        );
-        return;
-      }
+      const response = await fetch(
+        `/api/vendor/listings?id=${encodeURIComponent(listing.id)}`,
+        {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json",
+          },
+        }
+      );
 
-      const response =
-        await fetch(
-          "/api/vendor/listings",
-          {
-            method: "DELETE",
-            headers: {
-              "Content-Type":
-                "application/json",
-              Authorization:
-                `Bearer ${token}`,
-            },
-            body:
-              JSON.stringify({
-                listingId,
-              }),
-          }
-        );
-
-      const result =
-        await response.json();
-
-      if (
-        response.status === 401
-      ) {
-        router.replace(
-          "/auth?type=vendor"
-        );
-        return;
-      }
+      const payload = await response.json().catch(() => null);
 
       if (!response.ok) {
         throw new Error(
-          result.error ||
-            "Failed to delete listing"
+          payload?.error || "Failed to delete the listing."
         );
       }
 
-      setDeleteConfirm(null);
-
-      toast.success(
-        "Listing deleted successfully."
+      setListings((current) =>
+        current.filter((item) => item.id !== listing.id)
       );
 
-      await fetchListings();
+      setSuccess("Listing deleted successfully.");
     } catch (err) {
-      console.error(
-        "Delete listing error:",
-        err
-      );
-
       setError(
         err instanceof Error
           ? err.message
-          : "Failed to delete listing"
+          : "Something went wrong while deleting the listing."
       );
     } finally {
-      setSaving(false);
+      setDeletingId(null);
     }
-  };
+  }
 
-  const filteredListings =
-    listings.filter((listing) => {
-      const query =
-        searchQuery
-          .trim()
-          .toLowerCase();
-
-      const matchesSearch =
-        !query ||
-        listing.title
-          .toLowerCase()
-          .includes(query) ||
-        (
-          listing.description ||
-          ""
-        )
-          .toLowerCase()
-          .includes(query) ||
-        (
-          listing.tags || []
-        ).some((tag) =>
-          tag
-            .toLowerCase()
-            .includes(query)
-        );
-
-      const matchesStatus =
-        statusFilter === "all" ||
-        listing.status ===
-          statusFilter;
-
-      const matchesType =
-        typeFilter === "all" ||
-        (
-          typeFilter ===
-          "service"
-            ? listing.is_service
-            : !listing.is_service
-        );
-
-      return (
-        matchesSearch &&
-        matchesStatus &&
-        matchesType
-      );
-    });
-
-  const statusCounts = {
-    all: listings.length,
-    pending_review:
-      listings.filter(
-        (listing) =>
-          listing.status ===
-          "pending_review"
-      ).length,
-    approved:
-      listings.filter(
-        (listing) =>
-          listing.status ===
-          "approved"
-      ).length,
-    rejected:
-      listings.filter(
-        (listing) =>
-          listing.status ===
-          "rejected"
-      ).length,
-    flagged:
-      listings.filter(
-        (listing) =>
-          listing.status ===
-          "flagged"
-      ).length,
-  };
-
-  const goodsCategories =
-    categories.filter(
-      (category) =>
-        category.type ===
-        "goods"
-    );
-
-  const serviceCategories =
-    categories.filter(
-      (category) =>
-        category.type ===
-        "service"
-    );
-
-  const availableCategories =
-    formIsService
-      ? serviceCategories
-      : goodsCategories;
-
-  const getCategoryName = (
-    categoryId: string | null
-  ) => {
-    if (!categoryId) {
-      return null;
-    }
-
+  if (authLoading || loading) {
     return (
-      categories.find(
-        (category) =>
-          category.id ===
-          categoryId
-      )?.name || null
-    );
-  };
-
-  if (authLoading) {
-    return (
-      <>
-        <Header />
-
-        <div className="pt-20 min-h-screen flex items-center justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-brand-gold" />
+      <main className="min-h-screen bg-gray-50 px-4 py-8">
+        <div className="mx-auto max-w-7xl">
+          <div className="animate-pulse space-y-6">
+            <div className="h-10 w-64 rounded-lg bg-gray-200" />
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              {Array.from({ length: 4 }).map((_, index) => (
+                <div
+                  key={index}
+                  className="h-28 rounded-2xl bg-gray-200"
+                />
+              ))}
+            </div>
+            <div className="h-96 rounded-2xl bg-gray-200" />
+          </div>
         </div>
-      </>
+      </main>
     );
   }
 
-  if (
-    !user ||
-    role !== "vendor"
-  ) {
-    return (
-      <>
-        <Header />
-
-        <div className="pt-20 min-h-screen flex items-center justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-brand-gold" />
-        </div>
-      </>
-    );
+  if (!user || !isVendor) {
+    return null;
   }
 
   return (
-    <>
-      <Header />
+    <main className="min-h-screen bg-gray-50 px-4 py-6 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-7xl space-y-6">
+        <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-medium text-gray-500">
+              Vendor dashboard
+            </p>
+            <h1 className="mt-1 text-2xl font-bold tracking-tight text-gray-900 sm:text-3xl">
+              My Listings
+            </h1>
+            <p className="mt-1 text-sm text-gray-600">
+              Manage the products and services you offer on DBMartNG.
+            </p>
+          </div>
 
-      <main className="pt-20 min-h-screen bg-surface-secondary">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
-          <StaggerEntrance>
-            {/* Header */}
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
-              <div>
-                <div className="flex items-center gap-3">
-                  <Link
-                    href="/dashboard/vendor"
-                    className="text-gray-400 hover:text-brand-navy transition-colors"
-                  >
-                    <ChevronLeft className="h-5 w-5" />
-                  </Link>
-
-                  <h1 className="text-2xl sm:text-3xl font-bold text-brand-navy font-display">
-                    Manage Listings
-                  </h1>
-                </div>
-
-                <p className="text-gray-500 mt-1">
-                  Add, edit, and manage
-                  your products and
-                  services
-                </p>
-              </div>
-
-              <Button
-                variant="gold"
-                size="md"
-                onClick={
-                  openCreateModal
-                }
-              >
-                <Plus className="h-4 w-4" />
-                Add Listing
-              </Button>
-            </div>
-
-            {/* Error */}
-            {error && (
-              <div className="mb-6 p-4 rounded-xl bg-accent-error/5 border border-accent-error/20 text-accent-error text-sm flex items-start justify-between gap-4">
-                <span>{error}</span>
-
-                <button
-                  type="button"
-                  onClick={() =>
-                    setError(null)
-                  }
-                  className="shrink-0"
-                  aria-label="Dismiss error"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-            )}
-
-            {/* Filters */}
-            <div className="glass rounded-2xl p-4 mb-6">
-              <div className="flex flex-col gap-4">
-                <div className="flex flex-col lg:flex-row gap-4">
-                  {/* Search */}
-                  <div className="relative flex-1">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-
-                    <input
-                      type="text"
-                      value={
-                        searchQuery
-                      }
-                      onChange={(event) =>
-                        setSearchQuery(
-                          event.target.value
-                        )
-                      }
-                      placeholder="Search listings..."
-                      className="w-full h-10 pl-9 pr-4 rounded-lg border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-brand-gold focus:border-transparent text-sm"
-                    />
-                  </div>
-
-                  {/* Type filters */}
-                  <div className="flex flex-wrap gap-2">
-                    {(
-                      [
-                        [
-                          "all",
-                          "All Types",
-                        ],
-                        [
-                          "goods",
-                          "Products",
-                        ],
-                        [
-                          "service",
-                          "Services",
-                        ],
-                      ] as const
-                    ).map(
-                      ([
-                        type,
-                        label,
-                      ]) => (
-                        <button
-                          key={type}
-                          type="button"
-                          onClick={() =>
-                            setTypeFilter(
-                              type
-                            )
-                          }
-                          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                            typeFilter ===
-                            type
-                              ? "bg-brand-navy text-white"
-                              : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                          }`}
-                        >
-                          {label}
-                        </button>
-                      )
-                    )}
-                  </div>
-                </div>
-
-                {/* Status filters */}
-                <div className="flex flex-wrap gap-2">
-                  {(
-                    [
-                      "all",
-                      "pending_review",
-                      "approved",
-                      "rejected",
-                      "flagged",
-                    ] as const
-                  ).map(
-                    (status) => (
-                      <button
-                        key={status}
-                        type="button"
-                        onClick={() =>
-                          setStatusFilter(
-                            status
-                          )
-                        }
-                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                          statusFilter ===
-                          status
-                            ? "bg-brand-navy text-white"
-                            : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                        }`}
-                      >
-                        {status ===
-                        "all"
-                          ? `All (${statusCounts.all})`
-                          : `${STATUS_CONFIG[status].label} (${statusCounts[status]})`}
-                      </button>
-                    )
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Listings */}
-            {loading ? (
-              <div className="glass rounded-2xl p-12 text-center">
-                <Loader2 className="h-8 w-8 animate-spin text-brand-gold mx-auto mb-4" />
-
-                <p className="text-gray-500">
-                  Loading your
-                  listings...
-                </p>
-              </div>
-            ) : filteredListings.length ===
-              0 ? (
-              <div className="glass rounded-2xl p-12 text-center">
-                <Package className="h-12 w-12 mx-auto mb-4 text-gray-300" />
-
-                <h3 className="text-lg font-bold text-brand-navy mb-2">
-                  {searchQuery ||
-                  statusFilter !==
-                    "all" ||
-                  typeFilter !==
-                    "all"
-                    ? "No matching listings"
-                    : "No listings yet"}
-                </h3>
-
-                <p className="text-gray-500 mb-6">
-                  {searchQuery ||
-                  statusFilter !==
-                    "all" ||
-                  typeFilter !==
-                    "all"
-                    ? "Try adjusting your search or filters."
-                    : "Add your first product or service to start getting discovered."}
-                </p>
-
-                {!searchQuery &&
-                  statusFilter ===
-                    "all" &&
-                  typeFilter ===
-                    "all" && (
-                    <Button
-                      variant="gold"
-                      onClick={
-                        openCreateModal
-                      }
-                    >
-                      <Plus className="h-4 w-4" />
-                      Add Your First
-                      Listing
-                    </Button>
-                  )}
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {filteredListings.map(
-                  (listing) => {
-                    const statusConfig =
-                      STATUS_CONFIG[
-                        listing.status
-                      ];
-
-                    const StatusIcon =
-                      statusConfig.icon;
-
-                    const categoryName =
-                      getCategoryName(
-                        listing.category_id
-                      );
-
-                    return (
-                      <div
-                        key={
-                          listing.id
-                        }
-                        className="glass rounded-2xl p-5 hover:shadow-md transition-shadow"
-                      >
-                        <div className="flex items-start gap-4">
-                          {/* Image */}
-                          <div className="w-16 h-16 rounded-xl bg-gray-100 flex items-center justify-center shrink-0 overflow-hidden">
-                            {listing
-                              .image_urls
-                              ?.[
-                              0
-                            ] ? (
-                              <img
-                                src={
-                                  listing
-                                    .image_urls[
-                                    0
-                                  ]
-                                }
-                                alt={
-                                  listing.title
-                                }
-                                className="w-full h-full object-cover"
-                              />
-                            ) : (
-                              <ImageIcon className="h-6 w-6 text-gray-300" />
-                            )}
-                          </div>
-
-                          {/* Content */}
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="min-w-0">
-                                <h3 className="font-bold text-brand-navy truncate">
-                                  {
-                                    listing.title
-                                  }
-                                </h3>
-
-                                <p className="text-sm text-gray-500 line-clamp-2 mt-0.5">
-                                  {listing.description ||
-                                    "No description"}
-                                </p>
-                              </div>
-
-                              <span
-                                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium border shrink-0 ${statusConfig.color}`}
-                              >
-                                <StatusIcon className="h-3 w-3" />
-
-                                {
-                                  statusConfig.label
-                                }
-                              </span>
-                            </div>
-
-                            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-3 text-xs text-gray-500">
-                              {categoryName && (
-                                <span className="inline-flex items-center gap-1">
-                                  <Tag className="h-3.5 w-3.5" />
-
-                                  {
-                                    categoryName
-                                  }
-                                </span>
-                              )}
-
-                              <span className="inline-flex items-center gap-1">
-                                {listing.is_service ? (
-                                  <>
-                                    <Wrench className="h-3.5 w-3.5" />
-                                    Service
-                                  </>
-                                ) : (
-                                  <>
-                                    <Package className="h-3.5 w-3.5" />
-                                    Product
-                                  </>
-                                )}
-                              </span>
-
-                              {listing.price !==
-                                null && (
-                                <span className="font-semibold text-brand-navy">
-                                  {formatNaira(
-                                    Number(
-                                      listing.price
-                                    )
-                                  )}
-
-                                  {listing.price_period
-                                    ? ` / ${listing.price_period}`
-                                    : ""}
-                                </span>
-                              )}
-
-                              <span className="inline-flex items-center gap-1">
-                                <Eye className="h-3.5 w-3.5" />
-                                {listing.view_count ||
-                                  0}{" "}
-                                views
-                              </span>
-
-                              <span>
-                                {
-                                  listing.contact_click_count ||
-                                    0
-                                }{" "}
-                                contacts
-                              </span>
-                            </div>
-
-                            {/* Status reason */}
-                            {listing.status_reason && (
-                              <div className="mt-3 p-3 rounded-lg bg-gray-50 border border-gray-100 text-xs text-gray-600">
-                                <span className="font-semibold text-brand-navy">
-                                  Review
-                                  note:
-                                </span>{" "}
-                                {
-                                  listing.status_reason
-                                }
-                              </div>
-                            )}
-
-                            {/* Tags */}
-                            {listing.tags?.length >
-                              0 && (
-                              <div className="flex flex-wrap gap-1.5 mt-3">
-                                {listing.tags
-                                  .slice(
-                                    0,
-                                    6
-                                  )
-                                  .map(
-                                    (
-                                      tag
-                                    ) => (
-                                      <span
-                                        key={
-                                          tag
-                                        }
-                                        className="px-2 py-1 rounded-md bg-gray-100 text-gray-500 text-[11px]"
-                                      >
-                                        #
-                                        {
-                                          tag
-                                        }
-                                      </span>
-                                    )
-                                  )}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Actions */}
-                        <div className="flex items-center justify-end gap-2 mt-4 pt-4 border-t border-gray-100">
-                          {listing.status ===
-                            "approved" && (
-                            <Link
-                              href={`/marketplace/${listing.slug}`}
-                              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-gray-600 hover:bg-gray-100 transition-colors"
-                            >
-                              <Eye className="h-3.5 w-3.5" />
-                              View
-                            </Link>
-                          )}
-
-                          <button
-                            type="button"
-                            onClick={() =>
-                              openEditModal(
-                                listing
-                              )
-                            }
-                            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-brand-navy hover:bg-brand-navy/5 transition-colors"
-                          >
-                            <Edit3 className="h-3.5 w-3.5" />
-                            Edit
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setDeleteConfirm(
-                                listing.id
-                              )
-                            }
-                            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-accent-error hover:bg-accent-error/5 transition-colors"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                            Delete
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  }
-                )}
-              </div>
-            )}
-          </StaggerEntrance>
-        </div>
-      </main>
-
-      {/* Create/Edit Modal */}
-      {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <button
             type="button"
-            aria-label="Close modal"
-            className="absolute inset-0 bg-black/40 backdrop-blur-sm cursor-default"
-            onClick={() =>
-              !saving &&
-              setShowModal(false)
-            }
-          />
+            onClick={openCreateModal}
+            className="inline-flex items-center justify-center rounded-xl bg-black px-5 py-3 text-sm font-semibold text-white transition hover:bg-gray-800"
+          >
+            + Add Listing
+          </button>
+        </header>
 
-          <div className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto bg-white rounded-2xl shadow-2xl">
-            <div className="sticky top-0 z-10 bg-white border-b border-gray-100 px-6 py-4 flex items-center justify-between">
+        {error && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {error}
+          </div>
+        )}
+
+        {success && (
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+            {success}
+          </div>
+        )}
+
+        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+            <p className="text-sm text-gray-500">Total</p>
+            <p className="mt-2 text-3xl font-bold text-gray-900">
+              {stats.total}
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+            <p className="text-sm text-gray-500">Approved</p>
+            <p className="mt-2 text-3xl font-bold text-emerald-600">
+              {stats.approved}
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+            <p className="text-sm text-gray-500">Pending</p>
+            <p className="mt-2 text-3xl font-bold text-blue-600">
+              {stats.pending}
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+            <p className="text-sm text-gray-500">Rejected</p>
+            <p className="mt-2 text-3xl font-bold text-red-600">
+              {stats.rejected}
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+            <p className="text-sm text-gray-500">Flagged</p>
+            <p className="mt-2 text-3xl font-bold text-amber-600">
+              {stats.flagged}
+            </p>
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm sm:p-6">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+            <div className="flex-1">
+              <label htmlFor="listing-search" className="sr-only">
+                Search listings
+              </label>
+
+              <input
+                id="listing-search"
+                type="search"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search your listings..."
+                className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm outline-none transition focus:border-black focus:ring-2 focus:ring-black/10"
+              />
+            </div>
+
+            <div className="lg:w-56">
+              <label htmlFor="status-filter" className="sr-only">
+                Filter by status
+              </label>
+
+              <select
+                id="status-filter"
+                value={statusFilter}
+                onChange={(event) =>
+                  setStatusFilter(
+                    event.target.value as "all" | ListingStatus
+                  )
+                }
+                className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm outline-none transition focus:border-black focus:ring-2 focus:ring-black/10"
+              >
+                <option value="all">All statuses</option>
+                <option value="approved">Approved</option>
+                <option value="pending_review">Pending review</option>
+                <option value="rejected">Rejected</option>
+                <option value="flagged">Flagged</option>
+              </select>
+            </div>
+          </div>
+        </section>
+
+        <section className="space-y-4">
+          {filteredListings.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-gray-300 bg-white px-6 py-16 text-center">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-gray-100 text-2xl">
+                📦
+              </div>
+
+              <h2 className="mt-4 text-lg font-semibold text-gray-900">
+                {listings.length === 0
+                  ? "You have no listings yet"
+                  : "No listings match your filters"}
+              </h2>
+
+              <p className="mx-auto mt-2 max-w-md text-sm text-gray-500">
+                {listings.length === 0
+                  ? "Create your first product or service listing to start selling on DBMartNG."
+                  : "Try changing your search or status filter."}
+              </p>
+
+              {listings.length === 0 && (
+                <button
+                  type="button"
+                  onClick={openCreateModal}
+                  className="mt-5 rounded-xl bg-black px-5 py-3 text-sm font-semibold text-white hover:bg-gray-800"
+                >
+                  Create your first listing
+                </button>
+              )}
+            </div>
+          ) : (
+            filteredListings.map((listing) => (
+              <article
+                key={listing.id}
+                className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm transition hover:shadow-md sm:p-6"
+              >
+                <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className={`rounded-full border px-3 py-1 text-xs font-semibold ${statusClass(
+                          listing.status
+                        )}`}
+                      >
+                        {statusLabel(listing.status)}
+                      </span>
+
+                      <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-600">
+                        {listing.is_service ? "Service" : "Product"}
+                      </span>
+
+                      {listing.categories?.name && (
+                        <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-600">
+                          {listing.categories.name}
+                        </span>
+                      )}
+                    </div>
+
+                    <h2 className="mt-3 break-words text-xl font-bold text-gray-900">
+                      {listing.title}
+                    </h2>
+
+                    <p className="mt-2 whitespace-pre-line break-words text-sm leading-6 text-gray-600">
+                      {listing.description}
+                    </p>
+
+                    <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+                      <span className="font-semibold text-gray-900">
+                        {formatPrice(listing.price)}
+                      </span>
+
+                      {listing.price_period && (
+                        <span className="text-gray-500">
+                          {listing.price_period}
+                        </span>
+                      )}
+
+                      <span className="text-gray-400">
+                        Created {formatDate(listing.created_at)}
+                      </span>
+                    </div>
+
+                    {(listing.tags ?? []).length > 0 && (
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {(listing.tags ?? []).map((tag) => (
+                          <span
+                            key={`${listing.id}-${tag}`}
+                            className="rounded-lg bg-gray-100 px-2.5 py-1 text-xs text-gray-600"
+                          >
+                            #{tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    {listing.status_reason && (
+                      <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                          Review note
+                        </p>
+                        <p className="mt-1 text-sm text-gray-700">
+                          {listing.status_reason}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex shrink-0 gap-2 lg:ml-6">
+                    <button
+                      type="button"
+                      onClick={() => openEditModal(listing)}
+                      className="rounded-xl border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition hover:bg-gray-50"
+                    >
+                      Edit
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => void handleDelete(listing)}
+                      disabled={deletingId === listing.id}
+                      className="rounded-xl border border-red-200 bg-white px-4 py-2.5 text-sm font-semibold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {deletingId === listing.id ? "Deleting..." : "Delete"}
+                    </button>
+                  </div>
+                </div>
+              </article>
+            ))
+          )}
+        </section>
+      </div>
+
+      {showModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="listing-modal-title"
+        >
+          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 bg-white px-5 py-4 sm:px-6">
               <div>
-                <h2 className="text-xl font-bold text-brand-navy">
-                  {editingListing
-                    ? "Edit Listing"
-                    : "Create Listing"}
+                <h2
+                  id="listing-modal-title"
+                  className="text-lg font-bold text-gray-900"
+                >
+                  {editingListing ? "Edit listing" : "Create listing"}
                 </h2>
 
-                <p className="text-sm text-gray-500 mt-1">
-                  {editingListing
-                    ? "Changes will be reviewed before the listing is published again."
-                    : "Add a product or service to DBMartNG."}
+                <p className="mt-0.5 text-xs text-gray-500">
+                  Listings are reviewed before being published.
                 </p>
               </div>
 
               <button
                 type="button"
-                onClick={() =>
-                  !saving &&
-                  setShowModal(false)
-                }
-                className="p-2 rounded-lg hover:bg-gray-100 text-gray-500"
+                onClick={closeModal}
+                disabled={saving}
                 aria-label="Close"
+                className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 disabled:opacity-50"
               >
-                <X className="h-5 w-5" />
+                ✕
               </button>
             </div>
 
-            <form
-              onSubmit={
-                handleSave
-              }
-              className="p-6 space-y-5"
-            >
-              {/* Modal error */}
-              {error && (
-                <div className="p-3 rounded-xl bg-accent-error/5 border border-accent-error/20 text-accent-error text-sm">
-                  {error}
-                </div>
-              )}
-
-              {/* Type */}
-              <div>
-                <label className="block text-sm font-semibold text-brand-navy mb-2">
-                  What are you
-                  listing?
-                </label>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      handleTypeChange(
-                        false
-                      )
-                    }
-                    className={`p-4 rounded-xl border text-left transition-all ${
-                      !formIsService
-                        ? "border-brand-gold bg-brand-gold/5 ring-1 ring-brand-gold"
-                        : "border-gray-200 hover:border-gray-300"
-                    }`}
-                  >
-                    <Package className="h-5 w-5 text-brand-navy mb-2" />
-
-                    <div className="font-semibold text-brand-navy">
-                      Product
-                    </div>
-
-                    <div className="text-xs text-gray-500 mt-1">
-                      Physical goods
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      handleTypeChange(
-                        true
-                      )
-                    }
-                    className={`p-4 rounded-xl border text-left transition-all ${
-                      formIsService
-                        ? "border-brand-gold bg-brand-gold/5 ring-1 ring-brand-gold"
-                        : "border-gray-200 hover:border-gray-300"
-                    }`}
-                  >
-                    <Wrench className="h-5 w-5 text-brand-navy mb-2" />
-
-                    <div className="font-semibold text-brand-navy">
-                      Service
-                    </div>
-
-                    <div className="text-xs text-gray-500 mt-1">
-                      Skills and professional
-                      services
-                    </div>
-                  </button>
-                </div>
-              </div>
-
-              {/* Title */}
+            <form onSubmit={handleSubmit} className="space-y-5 p-5 sm:p-6">
               <div>
                 <label
                   htmlFor="listing-title"
-                  className="block text-sm font-semibold text-brand-navy mb-2"
+                  className="mb-2 block text-sm font-semibold text-gray-800"
                 >
                   Title
                 </label>
 
                 <input
                   id="listing-title"
-                  type="text"
-                  value={
-                    formTitle
-                  }
+                  value={form.title}
                   onChange={(event) =>
-                    setFormTitle(
-                      event.target.value
-                    )
+                    updateForm("title", event.target.value)
                   }
                   maxLength={150}
                   placeholder={
-                    formIsService
-                      ? "e.g. Professional Makeup Services"
-                      : "e.g. Premium Sneakers"
+                    form.isService
+                      ? "e.g. Professional graphic design"
+                      : "e.g. Premium wireless headphones"
                   }
-                  className="w-full h-11 px-4 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-gold focus:border-transparent text-sm"
+                  className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-black focus:ring-2 focus:ring-black/10"
                   required
                 />
-
-                <p className="text-[11px] text-gray-400 mt-1">
-                  {formTitle.length}/150
-                </p>
               </div>
 
-              {/* Description */}
               <div>
-                <label
-                  htmlFor="listing-description"
-                  className="block text-sm font-semibold text-brand-navy mb-2"
-                >
-                  Description
+                <label className="mb-2 block text-sm font-semibold text-gray-800">
+                  Listing type
                 </label>
 
-                <textarea
-                  id="listing-description"
-                  value={
-                    formDescription
-                  }
-                  onChange={(event) =>
-                    setFormDescription(
-                      event.target.value
-                    )
-                  }
-                  maxLength={5000}
-                  rows={5}
-                  placeholder="Describe what you're offering, important details, quality, location, delivery options, or anything buyers should know."
-                  className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-gold focus:border-transparent text-sm resize-none"
-                  required
-                />
-
-                <p className="text-[11px] text-gray-400 mt-1">
-                  {formDescription.length}
-                  /5000
-                </p>
-              </div>
-
-              {/* Price */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label
-                    htmlFor="listing-price"
-                    className="block text-sm font-semibold text-brand-navy mb-2"
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => handleTypeChange(false)}
+                    className={`rounded-xl border px-4 py-3 text-sm font-semibold transition ${
+                      !form.isService
+                        ? "border-black bg-black text-white"
+                        : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+                    }`}
                   >
-                    Price
-                  </label>
+                    Product
+                  </button>
 
-                  <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">
-                      ₦
-                    </span>
-
-                    <input
-                      id="listing-price"
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={
-                        formPrice
-                      }
-                      onChange={(
-                        event
-                      ) =>
-                        setFormPrice(
-                          event.target
-                            .value
-                        )
-                      }
-                      placeholder="0.00"
-                      className="w-full h-11 pl-8 pr-4 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-gold focus:border-transparent text-sm"
-                    />
-                  </div>
-
-                  <p className="text-[11px] text-gray-400 mt-1">
-                    Leave blank if the
-                    price is negotiable.
-                  </p>
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="listing-price-period"
-                    className="block text-sm font-semibold text-brand-navy mb-2"
+                  <button
+                    type="button"
+                    onClick={() => handleTypeChange(true)}
+                    className={`rounded-xl border px-4 py-3 text-sm font-semibold transition ${
+                      form.isService
+                        ? "border-black bg-black text-white"
+                        : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+                    }`}
                   >
-                    Price period
-                  </label>
-
-                  <select
-                    id="listing-price-period"
-                    value={
-                      formPricePeriod
-                    }
-                    onChange={(
-                      event
-                    ) =>
-                      setFormPricePeriod(
-                        event.target
-                          .value
-                      )
-                    }
-                    className="w-full h-11 px-4 rounded-xl border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-brand-gold focus:border-transparent text-sm"
-                  >
-                    <option value="">
-                      One-time / not specified
-                    </option>
-                    <option value="hour">
-                      Per hour
-                    </option>
-                    <option value="day">
-                      Per day
-                    </option>
-                    <option value="week">
-                      Per week
-                    </option>
-                    <option value="month">
-                      Per month
-                    </option>
-                    <option value="session">
-                      Per session
-                    </option>
-                    <option value="item">
-                      Per item
-                    </option>
-                  </select>
+                    Service
+                  </button>
                 </div>
               </div>
 
-              {/* Category */}
               <div>
                 <label
                   htmlFor="listing-category"
-                  className="block text-sm font-semibold text-brand-navy mb-2"
+                  className="mb-2 block text-sm font-semibold text-gray-800"
                 >
                   Category
                 </label>
 
                 <select
                   id="listing-category"
-                  value={
-                    formCategory
-                  }
+                  value={form.categoryId}
                   onChange={(event) =>
-                    setFormCategory(
-                      event.target
-                        .value
-                    )
+                    updateForm("categoryId", event.target.value)
                   }
-                  disabled={
-                    categoriesLoading
-                  }
-                  className="w-full h-11 px-4 rounded-xl border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-brand-gold focus:border-transparent text-sm disabled:opacity-60"
+                  className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm outline-none focus:border-black focus:ring-2 focus:ring-black/10"
+                  required
                 >
-                  <option value="">
-                    {categoriesLoading
-                      ? "Loading categories..."
-                      : "Select a category"}
-                  </option>
+                  <option value="">Select a category</option>
 
-                  {availableCategories.map(
-                    (category) => (
-                      <option
-                        key={
-                          category.id
-                        }
-                        value={
-                          category.id
-                        }
-                      >
-                        {category.name}
-                      </option>
-                    )
-                  )}
+                  {visibleCategories.map((category) => (
+                    <option key={category.id} value={category.id}>
+                      {category.name}
+                    </option>
+                  ))}
                 </select>
 
-                {!categoriesLoading &&
-                  availableCategories.length ===
-                    0 && (
-                    <p className="text-xs text-accent-error mt-1">
-                      No active{" "}
-                      {formIsService
-                        ? "service"
-                        : "product"}{" "}
-                      categories are
-                      available.
-                    </p>
-                  )}
+                {visibleCategories.length === 0 && (
+                  <p className="mt-2 text-xs text-amber-600">
+                    No active categories are available for this listing type.
+                  </p>
+                )}
               </div>
 
-              {/* Tags */}
+              <div>
+                <label
+                  htmlFor="listing-description"
+                  className="mb-2 block text-sm font-semibold text-gray-800"
+                >
+                  Description
+                </label>
+
+                <textarea
+                  id="listing-description"
+                  value={form.description}
+                  onChange={(event) =>
+                    updateForm("description", event.target.value)
+                  }
+                  rows={6}
+                  maxLength={5000}
+                  placeholder="Describe what you are offering, including important details buyers should know."
+                  className="w-full resize-y rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-black focus:ring-2 focus:ring-black/10"
+                  required
+                />
+
+                <p className="mt-1 text-right text-xs text-gray-400">
+                  {form.description.length}/5000
+                </p>
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label
+                    htmlFor="listing-price"
+                    className="mb-2 block text-sm font-semibold text-gray-800"
+                  >
+                    Price
+                  </label>
+
+                  <input
+                    id="listing-price"
+                    type="text"
+                    inputMode="decimal"
+                    value={form.price}
+                    onChange={(event) =>
+                      updateForm("price", event.target.value)
+                    }
+                    placeholder="e.g. 25000"
+                    className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-black focus:ring-2 focus:ring-black/10"
+                  />
+
+                  <p className="mt-1 text-xs text-gray-400">
+                    Leave blank if the price is negotiable.
+                  </p>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="listing-price-period"
+                    className="mb-2 block text-sm font-semibold text-gray-800"
+                  >
+                    Price period
+                  </label>
+
+                  <select
+                    id="listing-price-period"
+                    value={form.pricePeriod}
+                    onChange={(event) =>
+                      updateForm("pricePeriod", event.target.value)
+                    }
+                    className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm outline-none focus:border-black focus:ring-2 focus:ring-black/10"
+                  >
+                    <option value="">One-time / not specified</option>
+                    <option value="per hour">Per hour</option>
+                    <option value="per day">Per day</option>
+                    <option value="per week">Per week</option>
+                    <option value="per month">Per month</option>
+                    <option value="per project">Per project</option>
+                    <option value="per item">Per item</option>
+                  </select>
+                </div>
+              </div>
+
               <div>
                 <label
                   htmlFor="listing-tags"
-                  className="block text-sm font-semibold text-brand-navy mb-2"
+                  className="mb-2 block text-sm font-semibold text-gray-800"
                 >
                   Tags
                 </label>
 
                 <input
                   id="listing-tags"
-                  type="text"
-                  value={
-                    formTags
-                  }
+                  value={form.tags}
                   onChange={(event) =>
-                    setFormTags(
-                      event.target
-                        .value
-                    )
+                    updateForm("tags", event.target.value)
                   }
-                  placeholder="e.g. sneakers, fashion, men"
-                  className="w-full h-11 px-4 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-gold focus:border-transparent text-sm"
+                  placeholder="e.g. fashion, affordable, delivery"
+                  className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-black focus:ring-2 focus:ring-black/10"
                 />
 
-                <p className="text-[11px] text-gray-400 mt-1">
-                  Separate tags with
-                  commas.
+                <p className="mt-1 text-xs text-gray-400">
+                  Separate tags with commas. Maximum 20 tags.
                 </p>
               </div>
 
-              {/* Moderation notice */}
-              <div className="p-4 rounded-xl bg-brand-navy/5 border border-brand-navy/10">
-                <div className="flex items-start gap-3">
-                  <AlertTriangle className="h-5 w-5 text-brand-gold shrink-0 mt-0.5" />
-
-                  <div>
-                    <p className="text-sm font-semibold text-brand-navy">
-                      Marketplace review
-                    </p>
-
-                    <p className="text-xs text-gray-500 mt-1 leading-relaxed">
-                      New listings and
-                      edited listings are
-                      reviewed before they
-                      appear publicly. Keep
-                      your description
-                      accurate and avoid
-                      prohibited or
-                      misleading content.
-                    </p>
-                  </div>
+              {error && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {error}
                 </div>
-              </div>
+              )}
 
-              {/* Buttons */}
-              <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 pt-2">
-                <Button
+              <div className="flex flex-col-reverse gap-3 border-t border-gray-200 pt-5 sm:flex-row sm:justify-end">
+                <button
                   type="button"
-                  variant="outline"
-                  onClick={() =>
-                    setShowModal(false)
-                  }
+                  onClick={closeModal}
                   disabled={saving}
+                  className="rounded-xl border border-gray-300 bg-white px-5 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
                 >
                   Cancel
-                </Button>
+                </button>
 
-                <Button
+                <button
                   type="submit"
-                  variant="gold"
-                  disabled={
-                    saving ||
-                    categoriesLoading
-                  }
+                  disabled={saving || visibleCategories.length === 0}
+                  className="rounded-xl bg-black px-5 py-3 text-sm font-semibold text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {saving ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Saving...
-                    </>
-                  ) : (
-                    <>
-                      <CheckCircle className="h-4 w-4" />
-                      {editingListing
-                        ? "Save Changes"
-                        : "Create Listing"}
-                    </>
-                  )}
-                </Button>
+                  {saving
+                    ? "Saving..."
+                    : editingListing
+                      ? "Update listing"
+                      : "Create listing"}
+                </button>
               </div>
             </form>
           </div>
         </div>
       )}
-
-      {/* Delete Confirmation */}
-      {deleteConfirm && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-          <button
-            type="button"
-            aria-label="Close confirmation"
-            className="absolute inset-0 bg-black/40 backdrop-blur-sm cursor-default"
-            onClick={() =>
-              !saving &&
-              setDeleteConfirm(
-                null
-              )
-            }
-          />
-
-          <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl p-6">
-            <div className="w-12 h-12 rounded-full bg-accent-error/10 flex items-center justify-center mb-4">
-              <Trash2 className="h-6 w-6 text-accent-error" />
-            </div>
-
-            <h2 className="text-xl font-bold text-brand-navy">
-              Delete listing?
-            </h2>
-
-            <p className="text-sm text-gray-500 mt-2 leading-relaxed">
-              This action cannot be
-              undone. The listing and
-              its marketplace record
-              will be permanently
-              removed.
-            </p>
-
-            <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 mt-6">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() =>
-                  setDeleteConfirm(
-                    null
-                  )
-                }
-                disabled={saving}
-              >
-                Cancel
-              </Button>
-
-              <button
-                type="button"
-                onClick={() =>
-                  handleDelete(
-                    deleteConfirm
-                  )
-                }
-                disabled={saving}
-                className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-lg bg-accent-error text-white text-sm font-semibold hover:opacity-90 disabled:opacity-60 transition-opacity"
-              >
-                {saving ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Deleting...
-                  </>
-                ) : (
-                  <>
-                    <Trash2 className="h-4 w-4" />
-                    Delete Listing
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </>
+    </main>
   );
 }"use client";
 
-import {
-  useState,
-  useEffect,
-  useCallback,
-  type FormEvent,
-} from "react";
-import { useRouter } from "next/navigation";
-import Link from "next/link";
-import { Header } from "@/components/layout/header";
-import { Button } from "@/components/ui/button";
-import { useAuth } from "@/hooks/useAuth";
-import StaggerEntrance from "@/components/animations/StaggerEntrance";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { formatNaira } from "@/lib/utils";
-import { toast } from "sonner";
-import {
-  Package,
-  Plus,
-  Eye,
-  Edit3,
-  Trash2,
-  Search,
-  X,
-  CheckCircle,
-  Clock,
-  AlertTriangle,
-  XCircle,
-  ChevronLeft,
-  Image as ImageIcon,
-  Loader2,
-  Tag,
-  Wrench,
-} from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
 
-type ListingStatus =
-  | "pending_review"
-  | "approved"
-  | "rejected"
-  | "flagged";
+type ListingStatus = "pending_review" | "approved" | "rejected" | "flagged";
 
-type CategoryType = "goods" | "service";
+type Listing = {
+  id: string;
+  vendor_id: string;
+  category_id: string | null;
+  title: string;
+  description: string;
+  price: number | null;
+  price_period: string | null;
+  is_service: boolean;
+  tags: string[] | null;
+  status: ListingStatus;
+  status_reason: string | null;
+  created_at: string;
+  updated_at: string;
+  categories?: {
+    id: string;
+    name: string;
+    type: "goods" | "services";
+  } | null;
+};
 
-interface Category {
+type Category = {
   id: string;
   name: string;
   slug: string;
-  type: CategoryType;
+  type: "goods" | "services";
   description: string | null;
-  sort_order: number;
+  sort_order: number | null;
   is_active: boolean;
-}
-
-interface Listing {
-  id: string;
-  title: string;
-  slug: string;
-  description: string | null;
-  price: number | null;
-  price_period: string | null;
-  category_id: string | null;
-  image_urls: string[];
-  status: ListingStatus;
-  status_reason: string | null;
-  is_service: boolean;
-  tags: string[];
-  view_count: number;
-  contact_click_count: number;
-  created_at: string;
-  updated_at: string;
-}
-
-const STATUS_CONFIG: Record<
-  ListingStatus,
-  {
-    label: string;
-    color: string;
-    icon: typeof Clock;
-  }
-> = {
-  pending_review: {
-    label: "Pending Review",
-    color:
-      "text-accent-warning bg-accent-warning/10 border-accent-warning/20",
-    icon: Clock,
-  },
-  approved: {
-    label: "Approved",
-    color:
-      "text-accent-success bg-accent-success/10 border-accent-success/20",
-    icon: CheckCircle,
-  },
-  rejected: {
-    label: "Rejected",
-    color:
-      "text-accent-error bg-accent-error/10 border-accent-error/20",
-    icon: XCircle,
-  },
-  flagged: {
-    label: "Flagged",
-    color:
-      "text-accent-error bg-accent-error/10 border-accent-error/20",
-    icon: AlertTriangle,
-  },
 };
+
+type FormState = {
+  title: string;
+  description: string;
+  price: string;
+  pricePeriod: string;
+  categoryId: string;
+  isService: boolean;
+  tags: string;
+};
+
+const EMPTY_FORM: FormState = {
+  title: "",
+  description: "",
+  price: "",
+  pricePeriod: "",
+  categoryId: "",
+  isService: false,
+  tags: "",
+};
+
+const supabase = createClient();
+
+function formatPrice(price: number | null) {
+  if (price === null || Number.isNaN(price)) {
+    return "Negotiable";
+  }
+
+  return `₦${new Intl.NumberFormat("en-NG").format(price)}`;
+}
+
+function formatDate(date: string) {
+  const value = new Date(date);
+
+  if (Number.isNaN(value.getTime())) {
+    return "";
+  }
+
+  return value.toLocaleDateString("en-NG", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function statusLabel(status: ListingStatus) {
+  switch (status) {
+    case "approved":
+      return "Approved";
+    case "rejected":
+      return "Rejected";
+    case "flagged":
+      return "Flagged";
+    default:
+      return "Pending review";
+  }
+}
+
+function statusClass(status: ListingStatus) {
+  switch (status) {
+    case "approved":
+      return "bg-emerald-50 text-emerald-700 border-emerald-200";
+    case "rejected":
+      return "bg-red-50 text-red-700 border-red-200";
+    case "flagged":
+      return "bg-amber-50 text-amber-700 border-amber-200";
+    default:
+      return "bg-blue-50 text-blue-700 border-blue-200";
+  }
+}
 
 export default function VendorListingsPage() {
   const { user, role, loading: authLoading } = useAuth();
-  const router = useRouter();
-  const supabase = createClient();
 
   const [listings, setListings] = useState<Listing[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
 
   const [loading, setLoading] = useState(true);
-  const [categoriesLoading, setCategoriesLoading] =
-    useState(true);
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const [error, setError] = useState<string | null>(
-    null
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | ListingStatus>(
+    "all"
   );
 
-  const [searchQuery, setSearchQuery] =
-    useState("");
+  const [showModal, setShowModal] = useState(false);
+  const [editingListing, setEditingListing] = useState<Listing | null>(null);
+  const [form, setForm] = useState<FormState>(EMPTY_FORM);
 
-  const [statusFilter, setStatusFilter] =
-    useState<ListingStatus | "all">("all");
+  const isVendor = role === "vendor";
 
-  const [typeFilter, setTypeFilter] =
-    useState<"all" | "goods" | "service">("all");
+  const loadCategories = useCallback(async (signal?: AbortSignal) => {
+    const { data, error: categoryError } = await supabase
+      .from("categories")
+      .select(
+        "id,name,slug,type,description,sort_order,is_active"
+      )
+      .eq("is_active", true)
+      .order("sort_order", { ascending: true })
+      .order("name", { ascending: true });
 
-  const [showModal, setShowModal] =
-    useState(false);
-
-  const [editingListing, setEditingListing] =
-    useState<Listing | null>(null);
-
-  const [saving, setSaving] = useState(false);
-
-  const [deleteConfirm, setDeleteConfirm] =
-    useState<string | null>(null);
-
-  const [formTitle, setFormTitle] =
-    useState("");
-
-  const [formDescription, setFormDescription] =
-    useState("");
-
-  const [formPrice, setFormPrice] =
-    useState("");
-
-  const [formPricePeriod, setFormPricePeriod] =
-    useState("");
-
-  const [formCategory, setFormCategory] =
-    useState("");
-
-  const [formIsService, setFormIsService] =
-    useState(false);
-
-  const [formTags, setFormTags] =
-    useState("");
-
-  /*
-   * Vendor-only guard.
-   */
-  useEffect(() => {
-    if (authLoading) return;
-
-    if (!user) {
-      router.replace("/auth?type=vendor");
+    if (signal?.aborted) {
       return;
     }
 
-    if (role !== "vendor") {
-      if (
-        role === "admin" ||
-        role === "sub_admin"
-      ) {
-        router.replace("/dashboard/admin");
-      } else if (role === "buyer") {
-        router.replace("/dashboard/buyer");
-      } else {
-        router.replace("/account");
-      }
+    if (categoryError) {
+      throw new Error(categoryError.message);
     }
-  }, [
-    user,
-    role,
-    authLoading,
-    router,
-  ]);
 
-  /*
-   * Get the current Supabase access token.
-   * The API now authenticates the vendor from
-   * this token rather than trusting a userId
-   * supplied by the browser.
-   */
-  const getAccessToken =
-    useCallback(async () => {
-      const {
-        data,
-        error,
-      } = await supabase.auth.getSession();
+    setCategories((data ?? []) as Category[]);
+  }, []);
 
-      if (
-        error ||
-        !data.session?.access_token
-      ) {
-        return null;
+  const getAccessToken = useCallback(async () => {
+    const {
+      data: { session },
+      error: sessionError,
+    } = await supabase.auth.getSession();
+
+    if (sessionError) {
+      throw new Error(sessionError.message);
+    }
+
+    if (!session?.access_token) {
+      throw new Error("Your session has expired. Please sign in again.");
+    }
+
+    return session.access_token;
+  }, []);
+
+  const loadListings = useCallback(
+    async (signal?: AbortSignal) => {
+      const token = await getAccessToken();
+
+      const response = await fetch("/api/vendor/listings", {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+        },
+        cache: "no-store",
+        signal,
+      });
+
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(
+          payload?.error || "Failed to load your listings."
+        );
       }
 
-      return data.session.access_token;
-    }, [supabase]);
-
-  /*
-   * Load real marketplace categories from Supabase.
-   */
-  const fetchCategories =
-    useCallback(async () => {
-      setCategoriesLoading(true);
-
-      try {
-        const {
-          data,
-          error: categoryError,
-        } = await supabase
-          .from("categories")
-          .select(
-            "id, name, slug, type, description, sort_order, is_active"
-          )
-          .eq("is_active", true)
-          .order("sort_order", {
-            ascending: true,
-          })
-          .order("name", {
-            ascending: true,
-          });
-
-        if (categoryError) {
-          console.error(
-            "Category fetch error:",
-            categoryError
-          );
-
-          setError(
-            "Unable to load marketplace categories."
-          );
-
-          return;
-        }
-
-        const normalized =
-          ((data || []) as Category[]).filter(
-            (category) =>
-              category.type === "goods" ||
-              category.type === "service"
-          );
-
-        setCategories(normalized);
-      } catch (err) {
-        console.error(
-          "Category loading error:",
-          err
-        );
-
-        setError(
-          "Unable to load marketplace categories."
-        );
-      } finally {
-        setCategoriesLoading(false);
+      if (signal?.aborted) {
+        return;
       }
-    }, [supabase]);
 
-  /*
-   * Load vendor listings.
-   */
-  const fetchListings =
-    useCallback(async () => {
-      if (!user) return;
+      setListings((payload?.listings ?? []) as Listing[]);
+    },
+    [getAccessToken]
+  );
+
+  const loadData = useCallback(
+    async (signal?: AbortSignal) => {
+      if (!isVendor || !user) {
+        return;
+      }
 
       setLoading(true);
-      setError(null);
+      setError("");
 
       try {
-        const token =
-          await getAccessToken();
-
-        if (!token) {
-          setError(
-            "Your session has expired. Please sign in again."
-          );
-
-          router.replace(
-            "/auth?type=vendor"
-          );
-
-          return;
-        }
-
-        const response =
-          await fetch(
-            "/api/vendor/listings",
-            {
-              method: "GET",
-              headers: {
-                Authorization:
-                  `Bearer ${token}`,
-              },
-              cache: "no-store",
-            }
-          );
-
-        const result =
-          await response.json();
-
-        if (
-          response.status === 401
-        ) {
-          router.replace(
-            "/auth?type=vendor"
-          );
-          return;
-        }
-
-        if (!response.ok) {
-          throw new Error(
-            result.error ||
-              "Failed to fetch listings"
-          );
-        }
-
-        if (result.success) {
-          setListings(
-            (result.data ||
-              []) as Listing[]
-          );
-        } else {
-          throw new Error(
-            result.error ||
-              "Failed to fetch listings"
-          );
-        }
+        await Promise.all([
+          loadListings(signal),
+          loadCategories(signal),
+        ]);
       } catch (err) {
-        console.error(
-          "Listings fetch error:",
-          err
-        );
+        if (signal?.aborted) {
+          return;
+        }
 
         setError(
           err instanceof Error
             ? err.message
-            : "Failed to load listings"
+            : "Unable to load your listings."
         );
       } finally {
-        setLoading(false);
+        if (!signal?.aborted) {
+          setLoading(false);
+        }
       }
-    }, [
-      user,
-      getAccessToken,
-      router,
-    ]);
+    },
+    [isVendor, user, loadListings, loadCategories]
+  );
 
   useEffect(() => {
-    if (
-      authLoading ||
-      !user ||
-      role !== "vendor"
-    ) {
+    if (authLoading) {
       return;
     }
-
-    fetchListings();
-    fetchCategories();
-  }, [
-    authLoading,
-    user,
-    role,
-    fetchListings,
-    fetchCategories,
-  ]);
-
-  const resetForm = () => {
-    setEditingListing(null);
-    setFormTitle("");
-    setFormDescription("");
-    setFormPrice("");
-    setFormPricePeriod("");
-    setFormCategory("");
-    setFormIsService(false);
-    setFormTags("");
-  };
-
-  const openCreateModal = () => {
-    resetForm();
-    setError(null);
-    setShowModal(true);
-  };
-
-  const openEditModal = (
-    listing: Listing
-  ) => {
-    setEditingListing(listing);
-    setFormTitle(listing.title);
-    setFormDescription(
-      listing.description || ""
-    );
-    setFormPrice(
-      listing.price !== null
-        ? String(listing.price)
-        : ""
-    );
-    setFormPricePeriod(
-      listing.price_period || ""
-    );
-    setFormCategory(
-      listing.category_id || ""
-    );
-    setFormIsService(
-      listing.is_service
-    );
-    setFormTags(
-      (listing.tags || []).join(", ")
-    );
-    setError(null);
-    setShowModal(true);
-  };
-
-  /*
-   * Change the category list automatically
-   * when switching between products and services.
-   */
-  const handleTypeChange = (
-    isService: boolean
-  ) => {
-    setFormIsService(isService);
-
-    const currentCategory =
-      categories.find(
-        (category) =>
-          category.id ===
-          formCategory
-      );
-
-    if (
-      currentCategory &&
-      ((isService &&
-        currentCategory.type !==
-          "service") ||
-        (!isService &&
-          currentCategory.type !==
-            "goods"))
-    ) {
-      setFormCategory("");
-    }
-  };
-
-  const handleSave = async (
-    event: FormEvent<HTMLFormElement>
-  ) => {
-    event.preventDefault();
 
     if (!user) {
-      setError(
-        "You must be signed in as a vendor."
-      );
+      window.location.replace("/auth");
       return;
     }
 
-    const title =
-      formTitle.trim();
+    if (role === "admin" || role === "sub_admin") {
+      window.location.replace("/dashboard/admin");
+      return;
+    }
+
+    if (role === "buyer") {
+      window.location.replace("/dashboard/buyer");
+      return;
+    }
+
+    if (role !== "vendor") {
+      window.location.replace("/account");
+    }
+  }, [authLoading, user, role]);
+
+  useEffect(() => {
+    if (!authLoading && isVendor && user) {
+      const controller = new AbortController();
+
+      void loadData(controller.signal);
+
+      return () => {
+        controller.abort();
+      };
+    }
+  }, [authLoading, isVendor, user, loadData]);
+
+  const filteredListings = useMemo(() => {
+    const normalizedSearch = search.trim().toLowerCase();
+
+    return listings.filter((listing) => {
+      const matchesStatus =
+        statusFilter === "all" || listing.status === statusFilter;
+
+      if (!matchesStatus) {
+        return false;
+      }
+
+      if (!normalizedSearch) {
+        return true;
+      }
+
+      const haystack = [
+        listing.title,
+        listing.description,
+        listing.categories?.name ?? "",
+        ...(listing.tags ?? []),
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      return haystack.includes(normalizedSearch);
+    });
+  }, [listings, search, statusFilter]);
+
+  const stats = useMemo(
+    () => ({
+      total: listings.length,
+      approved: listings.filter((item) => item.status === "approved").length,
+      pending: listings.filter(
+        (item) => item.status === "pending_review"
+      ).length,
+      rejected: listings.filter((item) => item.status === "rejected").length,
+      flagged: listings.filter((item) => item.status === "flagged").length,
+    }),
+    [listings]
+  );
+
+  const visibleCategories = useMemo(
+    () =>
+      categories.filter(
+        (category) =>
+          category.type === (form.isService ? "services" : "goods")
+      ),
+    [categories, form.isService]
+  );
+
+  function resetForm() {
+    setForm(EMPTY_FORM);
+    setEditingListing(null);
+  }
+
+  function openCreateModal() {
+    resetForm();
+    setError("");
+    setSuccess("");
+    setShowModal(true);
+  }
+
+  function openEditModal(listing: Listing) {
+    setEditingListing(listing);
+
+    setForm({
+      title: listing.title ?? "",
+      description: listing.description ?? "",
+      price:
+        listing.price === null || listing.price === undefined
+          ? ""
+          : String(listing.price),
+      pricePeriod: listing.price_period ?? "",
+      categoryId: listing.category_id ?? "",
+      isService: Boolean(listing.is_service),
+      tags: (listing.tags ?? []).join(", "),
+    });
+
+    setError("");
+    setSuccess("");
+    setShowModal(true);
+  }
+
+  function closeModal() {
+    if (saving) {
+      return;
+    }
+
+    setShowModal(false);
+    resetForm();
+  }
+
+  function updateForm<K extends keyof FormState>(
+    key: K,
+    value: FormState[K]
+  ) {
+    setForm((current) => ({
+      ...current,
+      [key]: value,
+    }));
+  }
+
+  function handleTypeChange(isService: boolean) {
+    setForm((current) => ({
+      ...current,
+      isService,
+      categoryId: "",
+      pricePeriod: isService ? current.pricePeriod : "",
+    }));
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    setError("");
+    setSuccess("");
+
+    const title = form.title.trim();
+    const description = form.description.trim();
 
     if (!title) {
-      setError(
-        "Listing title is required."
-      );
+      setError("Please enter a listing title.");
       return;
     }
 
-    if (
-      formDescription.trim()
-        .length < 10
-    ) {
-      setError(
-        "Please provide a more detailed description."
-      );
+    if (!description) {
+      setError("Please enter a description.");
       return;
     }
 
-    if (
-      formPrice &&
-      (
-        !Number.isFinite(
-          Number(formPrice)
-        ) ||
-        Number(formPrice) < 0
-      )
-    ) {
-      setError(
-        "Please enter a valid price."
-      );
+    if (!form.categoryId) {
+      setError("Please select a category.");
       return;
     }
 
-    setSaving(true);
-    setError(null);
+    let price: number | null = null;
 
-    try {
-      const token =
-        await getAccessToken();
+    if (form.price.trim()) {
+      const parsedPrice = Number(form.price.replace(/,/g, "").trim());
 
-      if (!token) {
-        router.replace(
-          "/auth?type=vendor"
-        );
+      if (!Number.isFinite(parsedPrice) || parsedPrice < 0) {
+        setError("Please enter a valid price.");
         return;
       }
 
-      const tags =
-        formTags
-          .split(",")
-          .map((tag) =>
-            tag.trim()
-          )
-          .filter(Boolean)
-          .slice(0, 20);
+      price = parsedPrice;
+    }
 
-      const payload = {
-        listingId:
-          editingListing?.id,
+    const tags = form.tags
+      .split(",")
+      .map((tag) => tag.trim())
+      .filter(Boolean)
+      .slice(0, 20);
+
+    setSaving(true);
+
+    try {
+      const token = await getAccessToken();
+
+      const body = {
+        ...(editingListing ? { id: editingListing.id } : {}),
         title,
-        description:
-          formDescription.trim(),
-        price: formPrice
-          ? Number(formPrice)
-          : null,
-        pricePeriod:
-          formPricePeriod.trim() ||
-          null,
-        categoryId:
-          formCategory || null,
-        isService:
-          formIsService,
+        description,
+        price,
+        pricePeriod: form.pricePeriod.trim() || null,
+        categoryId: form.categoryId,
+        isService: form.isService,
         tags,
       };
 
-      const response =
-        await fetch(
-          "/api/vendor/listings",
-          {
-            method:
-              editingListing
-                ? "PUT"
-                : "POST",
-            headers: {
-              "Content-Type":
-                "application/json",
-              Authorization:
-                `Bearer ${token}`,
-            },
-            body:
-              JSON.stringify(
-                payload
-              ),
-          }
-        );
+      const response = await fetch("/api/vendor/listings", {
+        method: editingListing ? "PUT" : "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(body),
+      });
 
-      const result =
-        await response.json();
-
-      if (
-        response.status === 401
-      ) {
-        router.replace(
-          "/auth?type=vendor"
-        );
-        return;
-      }
+      const payload = await response.json().catch(() => null);
 
       if (!response.ok) {
         throw new Error(
-          result.error ||
-            "Failed to save listing"
+          payload?.error ||
+            (editingListing
+              ? "Failed to update listing."
+              : "Failed to create listing.")
         );
       }
+
+      setSuccess(
+        editingListing
+          ? "Listing updated and sent for review."
+          : "Listing created and sent for review."
+      );
 
       setShowModal(false);
       resetForm();
 
-      toast.success(
-        editingListing
-          ? "Listing updated and sent for re-review."
-          : "Listing created and submitted for review."
-      );
-
-      await fetchListings();
+      await loadListings();
     } catch (err) {
-      console.error(
-        "Save listing error:",
-        err
-      );
-
       setError(
         err instanceof Error
           ? err.message
-          : "Failed to save listing"
+          : "Something went wrong while saving the listing."
       );
     } finally {
       setSaving(false);
     }
-  };
+  }
 
-  const handleDelete = async (
-    listingId: string
-  ) => {
-    if (!user) return;
+  async function handleDelete(listing: Listing) {
+    const confirmed = window.confirm(
+      `Delete "${listing.title}"?\n\nThis action cannot be undone.`
+    );
 
-    setSaving(true);
-    setError(null);
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingId(listing.id);
+    setError("");
+    setSuccess("");
 
     try {
-      const token =
-        await getAccessToken();
+      const token = await getAccessToken();
 
-      if (!token) {
-        router.replace(
-          "/auth?type=vendor"
-        );
-        return;
-      }
+      const response = await fetch(
+        `/api/vendor/listings?id=${encodeURIComponent(listing.id)}`,
+        {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json",
+          },
+        }
+      );
 
-      const response =
-        await fetch(
-          "/api/vendor/listings",
-          {
-            method: "DELETE",
-            headers: {
-              "Content-Type":
-                "application/json",
-              Authorization:
-                `Bearer ${token}`,
-            },
-            body:
-              JSON.stringify({
-                listingId,
-              }),
-          }
-        );
-
-      const result =
-        await response.json();
-
-      if (
-        response.status === 401
-      ) {
-        router.replace(
-          "/auth?type=vendor"
-        );
-        return;
-      }
+      const payload = await response.json().catch(() => null);
 
       if (!response.ok) {
         throw new Error(
-          result.error ||
-            "Failed to delete listing"
+          payload?.error || "Failed to delete the listing."
         );
       }
 
-      setDeleteConfirm(null);
-
-      toast.success(
-        "Listing deleted successfully."
+      setListings((current) =>
+        current.filter((item) => item.id !== listing.id)
       );
 
-      await fetchListings();
+      setSuccess("Listing deleted successfully.");
     } catch (err) {
-      console.error(
-        "Delete listing error:",
-        err
-      );
-
       setError(
         err instanceof Error
           ? err.message
-          : "Failed to delete listing"
+          : "Something went wrong while deleting the listing."
       );
     } finally {
-      setSaving(false);
+      setDeletingId(null);
     }
-  };
+  }
 
-  const filteredListings =
-    listings.filter((listing) => {
-      const query =
-        searchQuery
-          .trim()
-          .toLowerCase();
-
-      const matchesSearch =
-        !query ||
-        listing.title
-          .toLowerCase()
-          .includes(query) ||
-        (
-          listing.description ||
-          ""
-        )
-          .toLowerCase()
-          .includes(query) ||
-        (
-          listing.tags || []
-        ).some((tag) =>
-          tag
-            .toLowerCase()
-            .includes(query)
-        );
-
-      const matchesStatus =
-        statusFilter === "all" ||
-        listing.status ===
-          statusFilter;
-
-      const matchesType =
-        typeFilter === "all" ||
-        (
-          typeFilter ===
-          "service"
-            ? listing.is_service
-            : !listing.is_service
-        );
-
-      return (
-        matchesSearch &&
-        matchesStatus &&
-        matchesType
-      );
-    });
-
-  const statusCounts = {
-    all: listings.length,
-    pending_review:
-      listings.filter(
-        (listing) =>
-          listing.status ===
-          "pending_review"
-      ).length,
-    approved:
-      listings.filter(
-        (listing) =>
-          listing.status ===
-          "approved"
-      ).length,
-    rejected:
-      listings.filter(
-        (listing) =>
-          listing.status ===
-          "rejected"
-      ).length,
-    flagged:
-      listings.filter(
-        (listing) =>
-          listing.status ===
-          "flagged"
-      ).length,
-  };
-
-  const goodsCategories =
-    categories.filter(
-      (category) =>
-        category.type ===
-        "goods"
-    );
-
-  const serviceCategories =
-    categories.filter(
-      (category) =>
-        category.type ===
-        "service"
-    );
-
-  const availableCategories =
-    formIsService
-      ? serviceCategories
-      : goodsCategories;
-
-  const getCategoryName = (
-    categoryId: string | null
-  ) => {
-    if (!categoryId) {
-      return null;
-    }
-
+  if (authLoading || loading) {
     return (
-      categories.find(
-        (category) =>
-          category.id ===
-          categoryId
-      )?.name || null
-    );
-  };
-
-  if (authLoading) {
-    return (
-      <>
-        <Header />
-
-        <div className="pt-20 min-h-screen flex items-center justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-brand-gold" />
+      <main className="min-h-screen bg-gray-50 px-4 py-8">
+        <div className="mx-auto max-w-7xl">
+          <div className="animate-pulse space-y-6">
+            <div className="h-10 w-64 rounded-lg bg-gray-200" />
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              {Array.from({ length: 4 }).map((_, index) => (
+                <div
+                  key={index}
+                  className="h-28 rounded-2xl bg-gray-200"
+                />
+              ))}
+            </div>
+            <div className="h-96 rounded-2xl bg-gray-200" />
+          </div>
         </div>
-      </>
+      </main>
     );
   }
 
-  if (
-    !user ||
-    role !== "vendor"
-  ) {
-    return (
-      <>
-        <Header />
-
-        <div className="pt-20 min-h-screen flex items-center justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-brand-gold" />
-        </div>
-      </>
-    );
+  if (!user || !isVendor) {
+    return null;
   }
 
   return (
-    <>
-      <Header />
+    <main className="min-h-screen bg-gray-50 px-4 py-6 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-7xl space-y-6">
+        <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-medium text-gray-500">
+              Vendor dashboard
+            </p>
+            <h1 className="mt-1 text-2xl font-bold tracking-tight text-gray-900 sm:text-3xl">
+              My Listings
+            </h1>
+            <p className="mt-1 text-sm text-gray-600">
+              Manage the products and services you offer on DBMartNG.
+            </p>
+          </div>
 
-      <main className="pt-20 min-h-screen bg-surface-secondary">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
-          <StaggerEntrance>
-            {/* Header */}
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
-              <div>
-                <div className="flex items-center gap-3">
-                  <Link
-                    href="/dashboard/vendor"
-                    className="text-gray-400 hover:text-brand-navy transition-colors"
-                  >
-                    <ChevronLeft className="h-5 w-5" />
-                  </Link>
-
-                  <h1 className="text-2xl sm:text-3xl font-bold text-brand-navy font-display">
-                    Manage Listings
-                  </h1>
-                </div>
-
-                <p className="text-gray-500 mt-1">
-                  Add, edit, and manage
-                  your products and
-                  services
-                </p>
-              </div>
-
-              <Button
-                variant="gold"
-                size="md"
-                onClick={
-                  openCreateModal
-                }
-              >
-                <Plus className="h-4 w-4" />
-                Add Listing
-              </Button>
-            </div>
-
-            {/* Error */}
-            {error && (
-              <div className="mb-6 p-4 rounded-xl bg-accent-error/5 border border-accent-error/20 text-accent-error text-sm flex items-start justify-between gap-4">
-                <span>{error}</span>
-
-                <button
-                  type="button"
-                  onClick={() =>
-                    setError(null)
-                  }
-                  className="shrink-0"
-                  aria-label="Dismiss error"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-            )}
-
-            {/* Filters */}
-            <div className="glass rounded-2xl p-4 mb-6">
-              <div className="flex flex-col gap-4">
-                <div className="flex flex-col lg:flex-row gap-4">
-                  {/* Search */}
-                  <div className="relative flex-1">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-
-                    <input
-                      type="text"
-                      value={
-                        searchQuery
-                      }
-                      onChange={(event) =>
-                        setSearchQuery(
-                          event.target.value
-                        )
-                      }
-                      placeholder="Search listings..."
-                      className="w-full h-10 pl-9 pr-4 rounded-lg border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-brand-gold focus:border-transparent text-sm"
-                    />
-                  </div>
-
-                  {/* Type filters */}
-                  <div className="flex flex-wrap gap-2">
-                    {(
-                      [
-                        [
-                          "all",
-                          "All Types",
-                        ],
-                        [
-                          "goods",
-                          "Products",
-                        ],
-                        [
-                          "service",
-                          "Services",
-                        ],
-                      ] as const
-                    ).map(
-                      ([
-                        type,
-                        label,
-                      ]) => (
-                        <button
-                          key={type}
-                          type="button"
-                          onClick={() =>
-                            setTypeFilter(
-                              type
-                            )
-                          }
-                          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                            typeFilter ===
-                            type
-                              ? "bg-brand-navy text-white"
-                              : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                          }`}
-                        >
-                          {label}
-                        </button>
-                      )
-                    )}
-                  </div>
-                </div>
-
-                {/* Status filters */}
-                <div className="flex flex-wrap gap-2">
-                  {(
-                    [
-                      "all",
-                      "pending_review",
-                      "approved",
-                      "rejected",
-                      "flagged",
-                    ] as const
-                  ).map(
-                    (status) => (
-                      <button
-                        key={status}
-                        type="button"
-                        onClick={() =>
-                          setStatusFilter(
-                            status
-                          )
-                        }
-                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                          statusFilter ===
-                          status
-                            ? "bg-brand-navy text-white"
-                            : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                        }`}
-                      >
-                        {status ===
-                        "all"
-                          ? `All (${statusCounts.all})`
-                          : `${STATUS_CONFIG[status].label} (${statusCounts[status]})`}
-                      </button>
-                    )
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Listings */}
-            {loading ? (
-              <div className="glass rounded-2xl p-12 text-center">
-                <Loader2 className="h-8 w-8 animate-spin text-brand-gold mx-auto mb-4" />
-
-                <p className="text-gray-500">
-                  Loading your
-                  listings...
-                </p>
-              </div>
-            ) : filteredListings.length ===
-              0 ? (
-              <div className="glass rounded-2xl p-12 text-center">
-                <Package className="h-12 w-12 mx-auto mb-4 text-gray-300" />
-
-                <h3 className="text-lg font-bold text-brand-navy mb-2">
-                  {searchQuery ||
-                  statusFilter !==
-                    "all" ||
-                  typeFilter !==
-                    "all"
-                    ? "No matching listings"
-                    : "No listings yet"}
-                </h3>
-
-                <p className="text-gray-500 mb-6">
-                  {searchQuery ||
-                  statusFilter !==
-                    "all" ||
-                  typeFilter !==
-                    "all"
-                    ? "Try adjusting your search or filters."
-                    : "Add your first product or service to start getting discovered."}
-                </p>
-
-                {!searchQuery &&
-                  statusFilter ===
-                    "all" &&
-                  typeFilter ===
-                    "all" && (
-                    <Button
-                      variant="gold"
-                      onClick={
-                        openCreateModal
-                      }
-                    >
-                      <Plus className="h-4 w-4" />
-                      Add Your First
-                      Listing
-                    </Button>
-                  )}
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {filteredListings.map(
-                  (listing) => {
-                    const statusConfig =
-                      STATUS_CONFIG[
-                        listing.status
-                      ];
-
-                    const StatusIcon =
-                      statusConfig.icon;
-
-                    const categoryName =
-                      getCategoryName(
-                        listing.category_id
-                      );
-
-                    return (
-                      <div
-                        key={
-                          listing.id
-                        }
-                        className="glass rounded-2xl p-5 hover:shadow-md transition-shadow"
-                      >
-                        <div className="flex items-start gap-4">
-                          {/* Image */}
-                          <div className="w-16 h-16 rounded-xl bg-gray-100 flex items-center justify-center shrink-0 overflow-hidden">
-                            {listing
-                              .image_urls
-                              ?.[
-                              0
-                            ] ? (
-                              <img
-                                src={
-                                  listing
-                                    .image_urls[
-                                    0
-                                  ]
-                                }
-                                alt={
-                                  listing.title
-                                }
-                                className="w-full h-full object-cover"
-                              />
-                            ) : (
-                              <ImageIcon className="h-6 w-6 text-gray-300" />
-                            )}
-                          </div>
-
-                          {/* Content */}
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="min-w-0">
-                                <h3 className="font-bold text-brand-navy truncate">
-                                  {
-                                    listing.title
-                                  }
-                                </h3>
-
-                                <p className="text-sm text-gray-500 line-clamp-2 mt-0.5">
-                                  {listing.description ||
-                                    "No description"}
-                                </p>
-                              </div>
-
-                              <span
-                                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium border shrink-0 ${statusConfig.color}`}
-                              >
-                                <StatusIcon className="h-3 w-3" />
-
-                                {
-                                  statusConfig.label
-                                }
-                              </span>
-                            </div>
-
-                            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-3 text-xs text-gray-500">
-                              {categoryName && (
-                                <span className="inline-flex items-center gap-1">
-                                  <Tag className="h-3.5 w-3.5" />
-
-                                  {
-                                    categoryName
-                                  }
-                                </span>
-                              )}
-
-                              <span className="inline-flex items-center gap-1">
-                                {listing.is_service ? (
-                                  <>
-                                    <Wrench className="h-3.5 w-3.5" />
-                                    Service
-                                  </>
-                                ) : (
-                                  <>
-                                    <Package className="h-3.5 w-3.5" />
-                                    Product
-                                  </>
-                                )}
-                              </span>
-
-                              {listing.price !==
-                                null && (
-                                <span className="font-semibold text-brand-navy">
-                                  {formatNaira(
-                                    Number(
-                                      listing.price
-                                    )
-                                  )}
-
-                                  {listing.price_period
-                                    ? ` / ${listing.price_period}`
-                                    : ""}
-                                </span>
-                              )}
-
-                              <span className="inline-flex items-center gap-1">
-                                <Eye className="h-3.5 w-3.5" />
-                                {listing.view_count ||
-                                  0}{" "}
-                                views
-                              </span>
-
-                              <span>
-                                {
-                                  listing.contact_click_count ||
-                                    0
-                                }{" "}
-                                contacts
-                              </span>
-                            </div>
-
-                            {/* Status reason */}
-                            {listing.status_reason && (
-                              <div className="mt-3 p-3 rounded-lg bg-gray-50 border border-gray-100 text-xs text-gray-600">
-                                <span className="font-semibold text-brand-navy">
-                                  Review
-                                  note:
-                                </span>{" "}
-                                {
-                                  listing.status_reason
-                                }
-                              </div>
-                            )}
-
-                            {/* Tags */}
-                            {listing.tags?.length >
-                              0 && (
-                              <div className="flex flex-wrap gap-1.5 mt-3">
-                                {listing.tags
-                                  .slice(
-                                    0,
-                                    6
-                                  )
-                                  .map(
-                                    (
-                                      tag
-                                    ) => (
-                                      <span
-                                        key={
-                                          tag
-                                        }
-                                        className="px-2 py-1 rounded-md bg-gray-100 text-gray-500 text-[11px]"
-                                      >
-                                        #
-                                        {
-                                          tag
-                                        }
-                                      </span>
-                                    )
-                                  )}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Actions */}
-                        <div className="flex items-center justify-end gap-2 mt-4 pt-4 border-t border-gray-100">
-                          {listing.status ===
-                            "approved" && (
-                            <Link
-                              href={`/marketplace/${listing.slug}`}
-                              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-gray-600 hover:bg-gray-100 transition-colors"
-                            >
-                              <Eye className="h-3.5 w-3.5" />
-                              View
-                            </Link>
-                          )}
-
-                          <button
-                            type="button"
-                            onClick={() =>
-                              openEditModal(
-                                listing
-                              )
-                            }
-                            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-brand-navy hover:bg-brand-navy/5 transition-colors"
-                          >
-                            <Edit3 className="h-3.5 w-3.5" />
-                            Edit
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setDeleteConfirm(
-                                listing.id
-                              )
-                            }
-                            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-accent-error hover:bg-accent-error/5 transition-colors"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                            Delete
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  }
-                )}
-              </div>
-            )}
-          </StaggerEntrance>
-        </div>
-      </main>
-
-      {/* Create/Edit Modal */}
-      {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <button
             type="button"
-            aria-label="Close modal"
-            className="absolute inset-0 bg-black/40 backdrop-blur-sm cursor-default"
-            onClick={() =>
-              !saving &&
-              setShowModal(false)
-            }
-          />
+            onClick={openCreateModal}
+            className="inline-flex items-center justify-center rounded-xl bg-black px-5 py-3 text-sm font-semibold text-white transition hover:bg-gray-800"
+          >
+            + Add Listing
+          </button>
+        </header>
 
-          <div className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto bg-white rounded-2xl shadow-2xl">
-            <div className="sticky top-0 z-10 bg-white border-b border-gray-100 px-6 py-4 flex items-center justify-between">
+        {error && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {error}
+          </div>
+        )}
+
+        {success && (
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+            {success}
+          </div>
+        )}
+
+        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+            <p className="text-sm text-gray-500">Total</p>
+            <p className="mt-2 text-3xl font-bold text-gray-900">
+              {stats.total}
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+            <p className="text-sm text-gray-500">Approved</p>
+            <p className="mt-2 text-3xl font-bold text-emerald-600">
+              {stats.approved}
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+            <p className="text-sm text-gray-500">Pending</p>
+            <p className="mt-2 text-3xl font-bold text-blue-600">
+              {stats.pending}
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+            <p className="text-sm text-gray-500">Rejected</p>
+            <p className="mt-2 text-3xl font-bold text-red-600">
+              {stats.rejected}
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+            <p className="text-sm text-gray-500">Flagged</p>
+            <p className="mt-2 text-3xl font-bold text-amber-600">
+              {stats.flagged}
+            </p>
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm sm:p-6">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+            <div className="flex-1">
+              <label htmlFor="listing-search" className="sr-only">
+                Search listings
+              </label>
+
+              <input
+                id="listing-search"
+                type="search"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search your listings..."
+                className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm outline-none transition focus:border-black focus:ring-2 focus:ring-black/10"
+              />
+            </div>
+
+            <div className="lg:w-56">
+              <label htmlFor="status-filter" className="sr-only">
+                Filter by status
+              </label>
+
+              <select
+                id="status-filter"
+                value={statusFilter}
+                onChange={(event) =>
+                  setStatusFilter(
+                    event.target.value as "all" | ListingStatus
+                  )
+                }
+                className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm outline-none transition focus:border-black focus:ring-2 focus:ring-black/10"
+              >
+                <option value="all">All statuses</option>
+                <option value="approved">Approved</option>
+                <option value="pending_review">Pending review</option>
+                <option value="rejected">Rejected</option>
+                <option value="flagged">Flagged</option>
+              </select>
+            </div>
+          </div>
+        </section>
+
+        <section className="space-y-4">
+          {filteredListings.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-gray-300 bg-white px-6 py-16 text-center">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-gray-100 text-2xl">
+                📦
+              </div>
+
+              <h2 className="mt-4 text-lg font-semibold text-gray-900">
+                {listings.length === 0
+                  ? "You have no listings yet"
+                  : "No listings match your filters"}
+              </h2>
+
+              <p className="mx-auto mt-2 max-w-md text-sm text-gray-500">
+                {listings.length === 0
+                  ? "Create your first product or service listing to start selling on DBMartNG."
+                  : "Try changing your search or status filter."}
+              </p>
+
+              {listings.length === 0 && (
+                <button
+                  type="button"
+                  onClick={openCreateModal}
+                  className="mt-5 rounded-xl bg-black px-5 py-3 text-sm font-semibold text-white hover:bg-gray-800"
+                >
+                  Create your first listing
+                </button>
+              )}
+            </div>
+          ) : (
+            filteredListings.map((listing) => (
+              <article
+                key={listing.id}
+                className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm transition hover:shadow-md sm:p-6"
+              >
+                <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className={`rounded-full border px-3 py-1 text-xs font-semibold ${statusClass(
+                          listing.status
+                        )}`}
+                      >
+                        {statusLabel(listing.status)}
+                      </span>
+
+                      <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-600">
+                        {listing.is_service ? "Service" : "Product"}
+                      </span>
+
+                      {listing.categories?.name && (
+                        <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-600">
+                          {listing.categories.name}
+                        </span>
+                      )}
+                    </div>
+
+                    <h2 className="mt-3 break-words text-xl font-bold text-gray-900">
+                      {listing.title}
+                    </h2>
+
+                    <p className="mt-2 whitespace-pre-line break-words text-sm leading-6 text-gray-600">
+                      {listing.description}
+                    </p>
+
+                    <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+                      <span className="font-semibold text-gray-900">
+                        {formatPrice(listing.price)}
+                      </span>
+
+                      {listing.price_period && (
+                        <span className="text-gray-500">
+                          {listing.price_period}
+                        </span>
+                      )}
+
+                      <span className="text-gray-400">
+                        Created {formatDate(listing.created_at)}
+                      </span>
+                    </div>
+
+                    {(listing.tags ?? []).length > 0 && (
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {(listing.tags ?? []).map((tag) => (
+                          <span
+                            key={`${listing.id}-${tag}`}
+                            className="rounded-lg bg-gray-100 px-2.5 py-1 text-xs text-gray-600"
+                          >
+                            #{tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    {listing.status_reason && (
+                      <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                          Review note
+                        </p>
+                        <p className="mt-1 text-sm text-gray-700">
+                          {listing.status_reason}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex shrink-0 gap-2 lg:ml-6">
+                    <button
+                      type="button"
+                      onClick={() => openEditModal(listing)}
+                      className="rounded-xl border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition hover:bg-gray-50"
+                    >
+                      Edit
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => void handleDelete(listing)}
+                      disabled={deletingId === listing.id}
+                      className="rounded-xl border border-red-200 bg-white px-4 py-2.5 text-sm font-semibold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {deletingId === listing.id ? "Deleting..." : "Delete"}
+                    </button>
+                  </div>
+                </div>
+              </article>
+            ))
+          )}
+        </section>
+      </div>
+
+      {showModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="listing-modal-title"
+        >
+          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 bg-white px-5 py-4 sm:px-6">
               <div>
-                <h2 className="text-xl font-bold text-brand-navy">
-                  {editingListing
-                    ? "Edit Listing"
-                    : "Create Listing"}
+                <h2
+                  id="listing-modal-title"
+                  className="text-lg font-bold text-gray-900"
+                >
+                  {editingListing ? "Edit listing" : "Create listing"}
                 </h2>
 
-                <p className="text-sm text-gray-500 mt-1">
-                  {editingListing
-                    ? "Changes will be reviewed before the listing is published again."
-                    : "Add a product or service to DBMartNG."}
+                <p className="mt-0.5 text-xs text-gray-500">
+                  Listings are reviewed before being published.
                 </p>
               </div>
 
               <button
                 type="button"
-                onClick={() =>
-                  !saving &&
-                  setShowModal(false)
-                }
-                className="p-2 rounded-lg hover:bg-gray-100 text-gray-500"
+                onClick={closeModal}
+                disabled={saving}
                 aria-label="Close"
+                className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 disabled:opacity-50"
               >
-                <X className="h-5 w-5" />
+                ✕
               </button>
             </div>
 
-            <form
-              onSubmit={
-                handleSave
-              }
-              className="p-6 space-y-5"
-            >
-              {/* Modal error */}
-              {error && (
-                <div className="p-3 rounded-xl bg-accent-error/5 border border-accent-error/20 text-accent-error text-sm">
-                  {error}
-                </div>
-              )}
-
-              {/* Type */}
-              <div>
-                <label className="block text-sm font-semibold text-brand-navy mb-2">
-                  What are you
-                  listing?
-                </label>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      handleTypeChange(
-                        false
-                      )
-                    }
-                    className={`p-4 rounded-xl border text-left transition-all ${
-                      !formIsService
-                        ? "border-brand-gold bg-brand-gold/5 ring-1 ring-brand-gold"
-                        : "border-gray-200 hover:border-gray-300"
-                    }`}
-                  >
-                    <Package className="h-5 w-5 text-brand-navy mb-2" />
-
-                    <div className="font-semibold text-brand-navy">
-                      Product
-                    </div>
-
-                    <div className="text-xs text-gray-500 mt-1">
-                      Physical goods
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      handleTypeChange(
-                        true
-                      )
-                    }
-                    className={`p-4 rounded-xl border text-left transition-all ${
-                      formIsService
-                        ? "border-brand-gold bg-brand-gold/5 ring-1 ring-brand-gold"
-                        : "border-gray-200 hover:border-gray-300"
-                    }`}
-                  >
-                    <Wrench className="h-5 w-5 text-brand-navy mb-2" />
-
-                    <div className="font-semibold text-brand-navy">
-                      Service
-                    </div>
-
-                    <div className="text-xs text-gray-500 mt-1">
-                      Skills and professional
-                      services
-                    </div>
-                  </button>
-                </div>
-              </div>
-
-              {/* Title */}
+            <form onSubmit={handleSubmit} className="space-y-5 p-5 sm:p-6">
               <div>
                 <label
                   htmlFor="listing-title"
-                  className="block text-sm font-semibold text-brand-navy mb-2"
+                  className="mb-2 block text-sm font-semibold text-gray-800"
                 >
                   Title
                 </label>
 
                 <input
                   id="listing-title"
-                  type="text"
-                  value={
-                    formTitle
-                  }
+                  value={form.title}
                   onChange={(event) =>
-                    setFormTitle(
-                      event.target.value
-                    )
+                    updateForm("title", event.target.value)
                   }
                   maxLength={150}
                   placeholder={
-                    formIsService
-                      ? "e.g. Professional Makeup Services"
-                      : "e.g. Premium Sneakers"
+                    form.isService
+                      ? "e.g. Professional graphic design"
+                      : "e.g. Premium wireless headphones"
                   }
-                  className="w-full h-11 px-4 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-gold focus:border-transparent text-sm"
+                  className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-black focus:ring-2 focus:ring-black/10"
                   required
                 />
-
-                <p className="text-[11px] text-gray-400 mt-1">
-                  {formTitle.length}/150
-                </p>
               </div>
 
-              {/* Description */}
               <div>
-                <label
-                  htmlFor="listing-description"
-                  className="block text-sm font-semibold text-brand-navy mb-2"
-                >
-                  Description
+                <label className="mb-2 block text-sm font-semibold text-gray-800">
+                  Listing type
                 </label>
 
-                <textarea
-                  id="listing-description"
-                  value={
-                    formDescription
-                  }
-                  onChange={(event) =>
-                    setFormDescription(
-                      event.target.value
-                    )
-                  }
-                  maxLength={5000}
-                  rows={5}
-                  placeholder="Describe what you're offering, important details, quality, location, delivery options, or anything buyers should know."
-                  className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-gold focus:border-transparent text-sm resize-none"
-                  required
-                />
-
-                <p className="text-[11px] text-gray-400 mt-1">
-                  {formDescription.length}
-                  /5000
-                </p>
-              </div>
-
-              {/* Price */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label
-                    htmlFor="listing-price"
-                    className="block text-sm font-semibold text-brand-navy mb-2"
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => handleTypeChange(false)}
+                    className={`rounded-xl border px-4 py-3 text-sm font-semibold transition ${
+                      !form.isService
+                        ? "border-black bg-black text-white"
+                        : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+                    }`}
                   >
-                    Price
-                  </label>
+                    Product
+                  </button>
 
-                  <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">
-                      ₦
-                    </span>
-
-                    <input
-                      id="listing-price"
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={
-                        formPrice
-                      }
-                      onChange={(
-                        event
-                      ) =>
-                        setFormPrice(
-                          event.target
-                            .value
-                        )
-                      }
-                      placeholder="0.00"
-                      className="w-full h-11 pl-8 pr-4 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-gold focus:border-transparent text-sm"
-                    />
-                  </div>
-
-                  <p className="text-[11px] text-gray-400 mt-1">
-                    Leave blank if the
-                    price is negotiable.
-                  </p>
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="listing-price-period"
-                    className="block text-sm font-semibold text-brand-navy mb-2"
+                  <button
+                    type="button"
+                    onClick={() => handleTypeChange(true)}
+                    className={`rounded-xl border px-4 py-3 text-sm font-semibold transition ${
+                      form.isService
+                        ? "border-black bg-black text-white"
+                        : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+                    }`}
                   >
-                    Price period
-                  </label>
-
-                  <select
-                    id="listing-price-period"
-                    value={
-                      formPricePeriod
-                    }
-                    onChange={(
-                      event
-                    ) =>
-                      setFormPricePeriod(
-                        event.target
-                          .value
-                      )
-                    }
-                    className="w-full h-11 px-4 rounded-xl border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-brand-gold focus:border-transparent text-sm"
-                  >
-                    <option value="">
-                      One-time / not specified
-                    </option>
-                    <option value="hour">
-                      Per hour
-                    </option>
-                    <option value="day">
-                      Per day
-                    </option>
-                    <option value="week">
-                      Per week
-                    </option>
-                    <option value="month">
-                      Per month
-                    </option>
-                    <option value="session">
-                      Per session
-                    </option>
-                    <option value="item">
-                      Per item
-                    </option>
-                  </select>
+                    Service
+                  </button>
                 </div>
               </div>
 
-              {/* Category */}
               <div>
                 <label
                   htmlFor="listing-category"
-                  className="block text-sm font-semibold text-brand-navy mb-2"
+                  className="mb-2 block text-sm font-semibold text-gray-800"
                 >
                   Category
                 </label>
 
                 <select
                   id="listing-category"
-                  value={
-                    formCategory
-                  }
+                  value={form.categoryId}
                   onChange={(event) =>
-                    setFormCategory(
-                      event.target
-                        .value
-                    )
+                    updateForm("categoryId", event.target.value)
                   }
-                  disabled={
-                    categoriesLoading
-                  }
-                  className="w-full h-11 px-4 rounded-xl border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-brand-gold focus:border-transparent text-sm disabled:opacity-60"
+                  className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm outline-none focus:border-black focus:ring-2 focus:ring-black/10"
+                  required
                 >
-                  <option value="">
-                    {categoriesLoading
-                      ? "Loading categories..."
-                      : "Select a category"}
-                  </option>
+                  <option value="">Select a category</option>
 
-                  {availableCategories.map(
-                    (category) => (
-                      <option
-                        key={
-                          category.id
-                        }
-                        value={
-                          category.id
-                        }
-                      >
-                        {category.name}
-                      </option>
-                    )
-                  )}
+                  {visibleCategories.map((category) => (
+                    <option key={category.id} value={category.id}>
+                      {category.name}
+                    </option>
+                  ))}
                 </select>
 
-                {!categoriesLoading &&
-                  availableCategories.length ===
-                    0 && (
-                    <p className="text-xs text-accent-error mt-1">
-                      No active{" "}
-                      {formIsService
-                        ? "service"
-                        : "product"}{" "}
-                      categories are
-                      available.
-                    </p>
-                  )}
+                {visibleCategories.length === 0 && (
+                  <p className="mt-2 text-xs text-amber-600">
+                    No active categories are available for this listing type.
+                  </p>
+                )}
               </div>
 
-              {/* Tags */}
+              <div>
+                <label
+                  htmlFor="listing-description"
+                  className="mb-2 block text-sm font-semibold text-gray-800"
+                >
+                  Description
+                </label>
+
+                <textarea
+                  id="listing-description"
+                  value={form.description}
+                  onChange={(event) =>
+                    updateForm("description", event.target.value)
+                  }
+                  rows={6}
+                  maxLength={5000}
+                  placeholder="Describe what you are offering, including important details buyers should know."
+                  className="w-full resize-y rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-black focus:ring-2 focus:ring-black/10"
+                  required
+                />
+
+                <p className="mt-1 text-right text-xs text-gray-400">
+                  {form.description.length}/5000
+                </p>
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label
+                    htmlFor="listing-price"
+                    className="mb-2 block text-sm font-semibold text-gray-800"
+                  >
+                    Price
+                  </label>
+
+                  <input
+                    id="listing-price"
+                    type="text"
+                    inputMode="decimal"
+                    value={form.price}
+                    onChange={(event) =>
+                      updateForm("price", event.target.value)
+                    }
+                    placeholder="e.g. 25000"
+                    className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-black focus:ring-2 focus:ring-black/10"
+                  />
+
+                  <p className="mt-1 text-xs text-gray-400">
+                    Leave blank if the price is negotiable.
+                  </p>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="listing-price-period"
+                    className="mb-2 block text-sm font-semibold text-gray-800"
+                  >
+                    Price period
+                  </label>
+
+                  <select
+                    id="listing-price-period"
+                    value={form.pricePeriod}
+                    onChange={(event) =>
+                      updateForm("pricePeriod", event.target.value)
+                    }
+                    className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm outline-none focus:border-black focus:ring-2 focus:ring-black/10"
+                  >
+                    <option value="">One-time / not specified</option>
+                    <option value="per hour">Per hour</option>
+                    <option value="per day">Per day</option>
+                    <option value="per week">Per week</option>
+                    <option value="per month">Per month</option>
+                    <option value="per project">Per project</option>
+                    <option value="per item">Per item</option>
+                  </select>
+                </div>
+              </div>
+
               <div>
                 <label
                   htmlFor="listing-tags"
-                  className="block text-sm font-semibold text-brand-navy mb-2"
+                  className="mb-2 block text-sm font-semibold text-gray-800"
                 >
                   Tags
                 </label>
 
                 <input
                   id="listing-tags"
-                  type="text"
-                  value={
-                    formTags
-                  }
+                  value={form.tags}
                   onChange={(event) =>
-                    setFormTags(
-                      event.target
-                        .value
-                    )
+                    updateForm("tags", event.target.value)
                   }
-                  placeholder="e.g. sneakers, fashion, men"
-                  className="w-full h-11 px-4 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-gold focus:border-transparent text-sm"
+                  placeholder="e.g. fashion, affordable, delivery"
+                  className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-black focus:ring-2 focus:ring-black/10"
                 />
 
-                <p className="text-[11px] text-gray-400 mt-1">
-                  Separate tags with
-                  commas.
+                <p className="mt-1 text-xs text-gray-400">
+                  Separate tags with commas. Maximum 20 tags.
                 </p>
               </div>
 
-              {/* Moderation notice */}
-              <div className="p-4 rounded-xl bg-brand-navy/5 border border-brand-navy/10">
-                <div className="flex items-start gap-3">
-                  <AlertTriangle className="h-5 w-5 text-brand-gold shrink-0 mt-0.5" />
-
-                  <div>
-                    <p className="text-sm font-semibold text-brand-navy">
-                      Marketplace review
-                    </p>
-
-                    <p className="text-xs text-gray-500 mt-1 leading-relaxed">
-                      New listings and
-                      edited listings are
-                      reviewed before they
-                      appear publicly. Keep
-                      your description
-                      accurate and avoid
-                      prohibited or
-                      misleading content.
-                    </p>
-                  </div>
+              {error && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {error}
                 </div>
-              </div>
+              )}
 
-              {/* Buttons */}
-              <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 pt-2">
-                <Button
+              <div className="flex flex-col-reverse gap-3 border-t border-gray-200 pt-5 sm:flex-row sm:justify-end">
+                <button
                   type="button"
-                  variant="outline"
-                  onClick={() =>
-                    setShowModal(false)
-                  }
+                  onClick={closeModal}
                   disabled={saving}
+                  className="rounded-xl border border-gray-300 bg-white px-5 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
                 >
                   Cancel
-                </Button>
+                </button>
 
-                <Button
+                <button
                   type="submit"
-                  variant="gold"
-                  disabled={
-                    saving ||
-                    categoriesLoading
-                  }
+                  disabled={saving || visibleCategories.length === 0}
+                  className="rounded-xl bg-black px-5 py-3 text-sm font-semibold text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {saving ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Saving...
-                    </>
-                  ) : (
-                    <>
-                      <CheckCircle className="h-4 w-4" />
-                      {editingListing
-                        ? "Save Changes"
-                        : "Create Listing"}
-                    </>
-                  )}
-                </Button>
+                  {saving
+                    ? "Saving..."
+                    : editingListing
+                      ? "Update listing"
+                      : "Create listing"}
+                </button>
               </div>
             </form>
           </div>
         </div>
       )}
-
-      {/* Delete Confirmation */}
-      {deleteConfirm && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-          <button
-            type="button"
-            aria-label="Close confirmation"
-            className="absolute inset-0 bg-black/40 backdrop-blur-sm cursor-default"
-            onClick={() =>
-              !saving &&
-              setDeleteConfirm(
-                null
-              )
-            }
-          />
-
-          <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl p-6">
-            <div className="w-12 h-12 rounded-full bg-accent-error/10 flex items-center justify-center mb-4">
-              <Trash2 className="h-6 w-6 text-accent-error" />
-            </div>
-
-            <h2 className="text-xl font-bold text-brand-navy">
-              Delete listing?
-            </h2>
-
-            <p className="text-sm text-gray-500 mt-2 leading-relaxed">
-              This action cannot be
-              undone. The listing and
-              its marketplace record
-              will be permanently
-              removed.
-            </p>
-
-            <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 mt-6">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() =>
-                  setDeleteConfirm(
-                    null
-                  )
-                }
-                disabled={saving}
-              >
-                Cancel
-              </Button>
-
-              <button
-                type="button"
-                onClick={() =>
-                  handleDelete(
-                    deleteConfirm
-                  )
-                }
-                disabled={saving}
-                className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-lg bg-accent-error text-white text-sm font-semibold hover:opacity-90 disabled:opacity-60 transition-opacity"
-              >
-                {saving ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Deleting...
-                  </>
-                ) : (
-                  <>
-                    <Trash2 className="h-4 w-4" />
-                    Delete Listing
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </>
+    </main>
   );
 }
