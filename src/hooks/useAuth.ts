@@ -76,11 +76,25 @@ export function useAuth() {
           );
         }
 
-        const { data: profile, error } = await supabase
+        const {
+          data: profileData,
+          error,
+        } = await supabase
           .from("users")
           .select("role")
           .eq("id", user.id)
           .maybeSingle();
+
+        /*
+         * The generated Supabase Database type currently resolves
+         * this table result to `never` in this project.
+         *
+         * Runtime data is still expected to be an object containing
+         * the user's role, so narrow the result locally.
+         */
+        const profile = profileData as {
+          role?: unknown;
+        } | null;
 
         if (!error && isValidRole(profile?.role)) {
           return profile.role;
@@ -379,6 +393,7 @@ export function useAuth() {
         router.push(
           `/referral/welcome?ref=${encodeURIComponent(referralCode)}`
         );
+
         return {
           isAdminSetup: false,
         };
