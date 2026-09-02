@@ -1,11 +1,11 @@
 /**
  * Server-side user profile helper.
- * 
+ *
  * This is the SINGLE SOURCE OF TRUTH for:
  * - Getting authenticated user
  * - Resolving user role from database
  * - Fetching full user profile
- * 
+ *
  * Never expose service-role keys to browser.
  * Never trust client-side metadata for roles.
  * Always query the database for the authoritative role.
@@ -27,11 +27,17 @@ export interface UserProfile {
   updated_at: string;
 }
 
-export interface VendorProfile extends Database["public"]["Tables"]["vendor_profiles"]["Row"] {}
+/*
+ * Use a type alias rather than an interface extending an indexed
+ * Database type. TypeScript does not allow an interface to extend a
+ * computed/indexed access type such as Database[...][...][...][...].
+ */
+export type VendorProfile =
+  Database["public"]["Tables"]["vendor_profiles"]["Row"];
 
 /**
  * Get the current authenticated user's profile.
- * 
+ *
  * Returns user profile + role from database.
  * Throws if user is not authenticated.
  * Handles missing profile gracefully.
@@ -51,12 +57,17 @@ export async function getCurrentUserProfile(): Promise<UserProfile | null> {
 
     const { data: profile, error: profileError } = await supabase
       .from("users")
-      .select("id, email, phone, role, full_name, avatar_url, created_at, updated_at")
+      .select(
+        "id, email, phone, role, full_name, avatar_url, created_at, updated_at"
+      )
       .eq("id", authUser.id)
       .maybeSingle();
 
     if (profileError) {
-      console.error("[getCurrentUserProfile] Error fetching profile:", profileError);
+      console.error(
+        "[getCurrentUserProfile] Error fetching profile:",
+        profileError
+      );
       return null;
     }
 
@@ -78,7 +89,7 @@ export async function getCurrentUserProfile(): Promise<UserProfile | null> {
 
 /**
  * Get vendor profile for a user (if they are a vendor).
- * 
+ *
  * Returns vendor profile or null if not a vendor.
  */
 export async function getVendorProfile(
