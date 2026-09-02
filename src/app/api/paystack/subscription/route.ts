@@ -14,75 +14,120 @@ const MANUAL_PAYMENT = {
   account_name: "CHINEDU GOODLUCK OBASIOKOLO",
 };
 
-const DEFAULT_PRICE_NGN = 5000;
+const PRO_PRICE_NGN = 5000;
 
 type AuthenticatedUser = {
   id: string;
   email?: string | null;
 };
 
+type VendorProfile = {
+  id: string;
+  subscription_status?: string | null;
+};
+
+type PaystackCustomerSearchResponse = {
+  status?: boolean;
+  message?: string;
+  data?: Array<{
+    customer_code?: string;
+    email?: string;
+  }>;
+};
+
+type PaystackCustomerResponse = {
+  status?: boolean;
+  message?: string;
+  data?: {
+    customer_code?: string;
+  };
+};
+
+type PaystackTransactionResponse = {
+  status?: boolean;
+  message?: string;
+  data?: {
+    authorization_url?: string;
+    access_code?: string;
+    reference?: string;
+  };
+};
+
+type PaystackSubscriptionResponse = {
+  status?: boolean;
+  message?: string;
+  data?: {
+    status?: string;
+    next_payment_date?: string | null;
+    subscription_code?: string;
+    email_token?: string;
+  };
+};
+
+/**
+ * The generated Database type currently does not expose a usable
+ * Insert/Update definition for some of the marketplace tables.
+ *
+ * This route is server-only and uses the Supabase service-role client,
+ * so the database client is intentionally widened here to avoid the
+ * generated `never` types blocking production builds.
+ */
+function getDb() {
+  return createAdminClient() as any;
+}
+
 async function getAuthenticatedUser(
   request: Request
 ): Promise<AuthenticatedUser | null> {
-  const adminClient = createAdminClient();
-
-  /*
-   * Prefer the authenticated Supabase session.
-   *
-   * The frontend must never be trusted to tell us which user is
-   * requesting payment.
-   */
   const authHeader = request.headers.get("authorization");
 
   if (!authHeader?.startsWith("Bearer ")) {
     return null;
   }
 
-  const token = authHeader.slice("Bearer ".length).trim();
+  const token = authHeader
+    .slice("Bearer ".length)
+    .trim();
 
   if (!token) {
     return null;
   }
 
-  const {
-    data: { user },
-    error,
-  } = await adminClient.auth.getUser(token);
+  try {
+    const adminClient = getDb();
 
-  if (error || !user) {
+    const {
+      data: authData,
+      error,
+    } = await adminClient.auth.getUser(token);
+
+    if (error || !authData?.user) {
+      return null;
+    }
+
+    return {
+      id: authData.user.id,
+      email: authData.user.email ?? null,
+    };
+  } catch (error) {
+    console.error(
+      "Subscription authentication error:",
+      error
+    );
+
     return null;
   }
-
-  return {
-    id: user.id,
-    email: user.email,
-  };
-}
-
-function getSafePrice(price: unknown): number {
-  if (typeof price !== "number" && typeof price !== "string") {
-    return DEFAULT_PRICE_NGN;
-  }
-
-  const parsed = Number(price);
-
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return DEFAULT_PRICE_NGN;
-  }
-
-  return Math.round(parsed * 100) / 100;
 }
 
 function manualPaymentResponse(
   userId: string,
   vendorId: string,
-  amount: number,
   reason?: string
 ) {
   const params = new URLSearchParams({
     vendor_id: vendorId,
     user_id: userId,
-    amount: String(amount),
+    amount: String(PRO_PRICE_NGN),
     currency: "NGN",
     bank_name: MANUAL_PAYMENT.bank_name,
     account_number: MANUAL_PAYMENT.account_number,
@@ -103,9 +148,11 @@ function manualPaymentResponse(
       data: {
         payment_url: `/payment/manual?${params.toString()}`,
         bank_name: MANUAL_PAYMENT.bank_name,
-        account_number: MANUAL_PAYMENT.account_number,
-        account_name: MANUAL_PAYMENT.account_name,
-        amount,
+        account_number:
+          MANUAL_PAYMENT.account_number,
+        account_name:
+          MANUAL_PAYMENT.account_name,
+        amount: PRO_PRICE_NGN,
         currency: "NGN",
       },
     },
@@ -113,24 +160,53 @@ function manualPaymentResponse(
   );
 }
 
+function getPlanCode(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  return trimmed;
+}
+
 // ─────────────────────────────────────────────
 // POST: Initialize subscription checkout
 // ─────────────────────────────────────────────
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    let body: Record<string, unknown> = {};
 
-    const {
-      email: requestedEmail,
-      planCode,
-      price,
-    } = body || {};
+    try {
+      const parsedBody = await request.json();
 
-    const authenticatedUser = await getAuthenticatedUser(request);
+      if (
+        parsedBody &&
+        typeof parsedBody === "object" &&
+        !Array.isArray(parsedBody)
+      ) {
+        body = parsedBody as Record<string, unknown>;
+      }
+    } catch {
+      body = {};
+    }
+
+    const planCode = getPlanCode(
+      body.planCode
+    );
+
+    const authenticatedUser =
+      await getAuthenticatedUser(request);
 
     if (!authenticatedUser) {
       return NextResponse.json(
-        { error: "Authentication required" },
+        {
+          error: "Authentication required",
+        },
         { status: 401 }
       );
     }
@@ -139,53 +215,77 @@ export async function POST(request: Request) {
 
     /*
      * Never trust an email supplied by the browser.
-     * Use the authenticated Supabase email instead.
+     * Use the authenticated Supabase email only.
      */
     const email =
-      authenticatedUser.email ||
-      (typeof requestedEmail === "string"
-        ? requestedEmail.trim().toLowerCase()
-        : "");
+      authenticatedUser.email?.trim().toLowerCase() || "";
 
     if (!email) {
       return NextResponse.json(
-        { error: "Authenticated user email is required" },
+        {
+          error:
+            "Authenticated user email is required",
+        },
         { status: 400 }
       );
     }
 
-    const adminClient = createAdminClient();
+    const adminClient = getDb();
 
-    // Get vendor profile belonging to the authenticated user.
-    const { data: vendorProfile, error: vendorError } = await adminClient
+    /*
+     * Get the vendor profile belonging to the
+     * authenticated user.
+     */
+    const {
+      data: vendorData,
+      error: vendorError,
+    } = await adminClient
       .from("vendor_profiles")
       .select("id, subscription_status")
       .eq("user_id", userId)
       .maybeSingle();
 
     if (vendorError) {
-      console.error("Vendor profile lookup error:", vendorError);
+      console.error(
+        "Vendor profile lookup error:",
+        vendorError
+      );
 
       return NextResponse.json(
-        { error: "Failed to load vendor profile" },
+        {
+          error:
+            "Failed to load vendor profile",
+        },
         { status: 500 }
       );
     }
 
-    if (!vendorProfile) {
+    if (!vendorData) {
       return NextResponse.json(
-        { error: "Vendor profile not found" },
+        {
+          error:
+            "Vendor profile not found",
+        },
         { status: 404 }
       );
     }
 
-    const amountNgn = getSafePrice(price);
+    const vendorProfile =
+      vendorData as VendorProfile;
 
     /*
-     * Paystack key is intentionally resolved server-side.
+     * Price is controlled by the server.
      *
-     * If it is missing, invalid, or unavailable, we do NOT activate
-     * anything. We simply return the manual OPay fallback.
+     * The client cannot change the subscription
+     * price by modifying its request payload.
+     */
+    const amountNgn = PRO_PRICE_NGN;
+
+    /*
+     * Resolve the Paystack secret key server-side.
+     *
+     * If unavailable, use the manual OPay fallback.
+     * Nothing is activated here.
      */
     let secretKey: string;
 
@@ -196,25 +296,29 @@ export async function POST(request: Request) {
         return manualPaymentResponse(
           userId,
           vendorProfile.id,
-          amountNgn,
           "Paystack key is unavailable"
         );
       }
     } catch (error) {
-      console.error("Unable to obtain Paystack secret key:", error);
+      console.error(
+        "Unable to obtain Paystack secret key:",
+        error
+      );
 
       return manualPaymentResponse(
         userId,
         vendorProfile.id,
-        amountNgn,
         "Paystack configuration unavailable"
       );
     }
 
-    const reference = `DBM-${userId.slice(0, 8)}-${Date.now()}-${Math.random()
-      .toString(36)
-      .slice(2, 8)
-      .toUpperCase()}`;
+    const reference =
+      `DBM-${userId.slice(0, 8)}-` +
+      `${Date.now()}-` +
+      `${Math.random()
+        .toString(36)
+        .slice(2, 8)
+        .toUpperCase()}`;
 
     /*
      * Find an existing Paystack customer.
@@ -223,69 +327,84 @@ export async function POST(request: Request) {
 
     try {
       const searchResponse = await fetch(
-        `${PAYSTACK_API}/customer?email=${encodeURIComponent(email)}`,
+        `${PAYSTACK_API}/customer?email=${encodeURIComponent(
+          email
+        )}`,
         {
           method: "GET",
           headers: {
-            Authorization: `Bearer ${secretKey}`,
-            "Content-Type": "application/json",
+            Authorization:
+              `Bearer ${secretKey}`,
+            "Content-Type":
+              "application/json",
           },
           cache: "no-store",
         }
       );
 
       if (searchResponse.ok) {
-        const searchData = await searchResponse.json();
+        const searchData =
+          (await searchResponse.json()) as PaystackCustomerSearchResponse;
 
         if (
-          searchData?.status &&
+          searchData.status &&
           Array.isArray(searchData.data) &&
           searchData.data.length > 0
         ) {
-          customerCode = searchData.data[0]?.customer_code || null;
+          customerCode =
+            searchData.data[0]?.customer_code ||
+            null;
         }
       }
     } catch (error) {
-      console.error("Paystack customer search failed:", error);
+      console.error(
+        "Paystack customer search failed:",
+        error
+      );
 
       return manualPaymentResponse(
         userId,
         vendorProfile.id,
-        amountNgn,
         "Paystack customer lookup failed"
       );
     }
 
     /*
-     * Create Paystack customer when one does not already exist.
+     * Create a Paystack customer if one does not
+     * already exist.
      */
     if (!customerCode) {
       try {
-        const customerResponse = await fetch(
-          `${PAYSTACK_API}/customer`,
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${secretKey}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              email,
-              metadata: {
-                userId,
-                vendorId: vendorProfile.id,
+        const customerResponse =
+          await fetch(
+            `${PAYSTACK_API}/customer`,
+            {
+              method: "POST",
+              headers: {
+                Authorization:
+                  `Bearer ${secretKey}`,
+                "Content-Type":
+                  "application/json",
               },
-            }),
-            cache: "no-store",
-          }
-        );
+              body: JSON.stringify({
+                email,
+                metadata: {
+                  userId,
+                  vendorId:
+                    vendorProfile.id,
+                },
+              }),
+              cache: "no-store",
+            }
+          );
 
-        const customerData = await customerResponse.json();
+        const customerData =
+          (await customerResponse.json()) as PaystackCustomerResponse;
 
         if (
           !customerResponse.ok ||
-          !customerData?.status ||
-          !customerData?.data?.customer_code
+          !customerData.status ||
+          !customerData.data?.customer_code
         ) {
           console.error(
             "Paystack customer creation failed:",
@@ -295,86 +414,110 @@ export async function POST(request: Request) {
           return manualPaymentResponse(
             userId,
             vendorProfile.id,
-            amountNgn,
             "Paystack customer creation failed"
           );
         }
 
-        customerCode = customerData.data.customer_code;
+        customerCode =
+          customerData.data.customer_code;
       } catch (error) {
-        console.error("Paystack customer creation error:", error);
+        console.error(
+          "Paystack customer creation error:",
+          error
+        );
 
         return manualPaymentResponse(
           userId,
           vendorProfile.id,
-          amountNgn,
           "Paystack customer creation failed"
         );
       }
     }
 
     /*
-     * Initialize Paystack checkout.
+     * Initialize the Paystack transaction.
      */
-    let txnData: any;
+    let transactionData:
+      PaystackTransactionResponse;
 
     try {
-      const amountKobo = toKobo(amountNgn);
+      const amountKobo =
+        toKobo(amountNgn);
 
-      const txnResponse = await fetch(
-        `${PAYSTACK_API}/transaction/initialize`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${secretKey}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            email,
-            amount: amountKobo,
-            plan: planCode || undefined,
-            channels: [...ALL_PAYMENT_CHANNELS],
-            reference,
-            metadata: {
-              userId,
-              vendorId: vendorProfile.id,
-              type: "subscription",
-              amountNgn,
+      const transactionResponse =
+        await fetch(
+          `${PAYSTACK_API}/transaction/initialize`,
+          {
+            method: "POST",
+            headers: {
+              Authorization:
+                `Bearer ${secretKey}`,
+              "Content-Type":
+                "application/json",
             },
-          }),
-          cache: "no-store",
-        }
-      );
+            body: JSON.stringify({
+              email,
+              amount: amountKobo,
 
-      txnData = await txnResponse.json();
+              ...(planCode
+                ? {
+                    plan: planCode,
+                  }
+                : {}),
+
+              channels: [
+                ...ALL_PAYMENT_CHANNELS,
+              ],
+
+              reference,
+
+              metadata: {
+                userId,
+                vendorId:
+                  vendorProfile.id,
+                type: "subscription",
+                planCode,
+                amountNgn,
+              },
+            }),
+            cache: "no-store",
+          }
+        );
+
+      transactionData =
+        (await transactionResponse.json()) as PaystackTransactionResponse;
 
       /*
-       * Any Paystack initialization failure should fall back to OPay.
+       * Any Paystack initialization failure
+       * falls back to manual OPay payment.
        */
       if (
-        !txnResponse.ok ||
-        !txnData?.status ||
-        !txnData?.data?.authorization_url
+        !transactionResponse.ok ||
+        !transactionData.status ||
+        !transactionData.data
+          ?.authorization_url
       ) {
         console.error(
           "Paystack transaction initialization failed:",
-          txnData
+          transactionData
         );
 
         return manualPaymentResponse(
           userId,
           vendorProfile.id,
-          amountNgn,
-          txnData?.message || "Paystack payment initialization failed"
+          transactionData.message ||
+            "Paystack payment initialization failed"
         );
       }
     } catch (error) {
-      console.error("Paystack transaction initialization error:", error);
+      console.error(
+        "Paystack transaction initialization error:",
+        error
+      );
 
       return manualPaymentResponse(
         userId,
         vendorProfile.id,
-        amountNgn,
         "Unable to connect to Paystack"
       );
     }
@@ -382,32 +525,40 @@ export async function POST(request: Request) {
     /*
      * IMPORTANT:
      *
-     * We do NOT mark the subscription active here.
+     * Initializing a Paystack transaction does NOT
+     * mean payment succeeded.
      *
-     * The transaction has only been initialized.
-     * Activation must happen after verified payment through the
-     * existing Paystack verification/webhook flow.
+     * Keep the local subscription pending until a
+     * server-side verification/webhook confirms
+     * successful payment.
      */
-    const { error: subscriptionError } = await adminClient
-      .from("subscriptions")
-      .upsert(
-        {
-          vendor_id: vendorProfile.id,
-          user_id: userId,
-          paystack_customer_code: customerCode,
-          paystack_subscription_code: null,
-          paystack_plan_code: planCode || null,
-          tier: "pro",
-          status: "pending",
-          price_paid: amountNgn,
-          currency: "NGN",
-          current_period_start: null,
-          current_period_end: null,
-        } as never,
-        {
-          onConflict: "user_id",
-        }
-      );
+    const { error: subscriptionError } =
+      await adminClient
+        .from("subscriptions")
+        .upsert(
+          {
+            vendor_id:
+              vendorProfile.id,
+            user_id: userId,
+            paystack_customer_code:
+              customerCode,
+            paystack_subscription_code:
+              null,
+            paystack_plan_code:
+              planCode,
+            tier: "pro",
+            status: "pending",
+            price_paid: amountNgn,
+            currency: "NGN",
+            current_period_start:
+              null,
+            current_period_end:
+              null,
+          },
+          {
+            onConflict: "user_id",
+          }
+        );
 
     if (subscriptionError) {
       console.error(
@@ -415,11 +566,6 @@ export async function POST(request: Request) {
         subscriptionError
       );
 
-      /*
-       * Do not silently lose the checkout reference.
-       * The user can still continue to Paystack, but we surface the
-       * server problem rather than pretending everything was stored.
-       */
       return NextResponse.json(
         {
           error:
@@ -434,20 +580,29 @@ export async function POST(request: Request) {
       fallback: null,
       payment_method: "paystack",
       data: {
-        authorization_url: txnData.data.authorization_url,
+        authorization_url:
+          transactionData.data
+            ?.authorization_url,
         reference,
-        access_code: txnData.data.access_code,
-        customer_code: customerCode,
+        access_code:
+          transactionData.data
+            ?.access_code,
+        customer_code:
+          customerCode,
         amount: amountNgn,
         currency: "NGN",
       },
     });
   } catch (error) {
-    console.error("Subscription initialization error:", error);
+    console.error(
+      "Subscription initialization error:",
+      error
+    );
 
     return NextResponse.json(
       {
-        error: "Internal server error",
+        error:
+          "Internal server error",
       },
       { status: 500 }
     );
@@ -459,21 +614,27 @@ export async function POST(request: Request) {
 // ─────────────────────────────────────────────
 export async function PUT(request: Request) {
   try {
-    const authenticatedUser = await getAuthenticatedUser(request);
+    const authenticatedUser =
+      await getAuthenticatedUser(request);
 
     if (!authenticatedUser) {
       return NextResponse.json(
-        { error: "Authentication required" },
+        {
+          error:
+            "Authentication required",
+        },
         { status: 401 }
       );
     }
 
-    const userId = authenticatedUser.id;
+    const userId =
+      authenticatedUser.id;
 
     let secretKey: string;
 
     try {
-      secretKey = await getSecretKey();
+      secretKey =
+        await getSecretKey();
 
       if (!secretKey?.trim()) {
         return NextResponse.json(
@@ -486,7 +647,10 @@ export async function PUT(request: Request) {
         );
       }
     } catch (error) {
-      console.error("Unable to obtain Paystack secret key:", error);
+      console.error(
+        "Unable to obtain Paystack secret key:",
+        error
+      );
 
       return NextResponse.json(
         {
@@ -498,77 +662,137 @@ export async function PUT(request: Request) {
       );
     }
 
-    const adminClient = createAdminClient();
+    const adminClient =
+      getDb();
 
-    const { data: sub, error: subError } = await adminClient
+    /*
+     * Only inspect the subscription belonging
+     * to the authenticated user.
+     */
+    const {
+      data: subscriptionData,
+      error: subscriptionLookupError,
+    } = await adminClient
       .from("subscriptions")
       .select(
-        "id, vendor_id, paystack_subscription_code, tier, status"
+        [
+          "id",
+          "vendor_id",
+          "paystack_subscription_code",
+          "tier",
+          "status",
+        ].join(", ")
       )
       .eq("user_id", userId)
       .eq("tier", "pro")
       .maybeSingle();
 
-    if (subError) {
-      console.error("Subscription lookup error:", subError);
+    if (subscriptionLookupError) {
+      console.error(
+        "Subscription lookup error:",
+        subscriptionLookupError
+      );
 
       return NextResponse.json(
-        { error: "Failed to load subscription" },
+        {
+          error:
+            "Failed to load subscription",
+        },
         { status: 500 }
       );
     }
 
-    if (!sub?.paystack_subscription_code) {
+    if (!subscriptionData) {
       return NextResponse.json(
         {
-          error: "No Paystack subscription found for this vendor",
+          error:
+            "No Pro subscription found for this vendor",
         },
         { status: 404 }
       );
     }
 
-    let result: any;
+    const subscription =
+      subscriptionData as {
+        id: string;
+        vendor_id: string;
+        paystack_subscription_code:
+          | string
+          | null;
+        tier: string;
+        status: string;
+      };
+
+    if (
+      !subscription.paystack_subscription_code
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "No Paystack subscription found for this vendor",
+        },
+        { status: 404 }
+      );
+    }
+
+    let paystackData:
+      PaystackSubscriptionResponse;
 
     try {
-      const response = await fetch(
-        `${PAYSTACK_API}/subscription/${encodeURIComponent(
-          sub.paystack_subscription_code
-        )}`,
-        {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${secretKey}`,
-            "Content-Type": "application/json",
-          },
-          cache: "no-store",
-        }
-      );
+      const response =
+        await fetch(
+          `${PAYSTACK_API}/subscription/${encodeURIComponent(
+            subscription.paystack_subscription_code
+          )}`,
+          {
+            method: "GET",
+            headers: {
+              Authorization:
+                `Bearer ${secretKey}`,
+              "Content-Type":
+                "application/json",
+            },
+            cache: "no-store",
+          }
+        );
 
-      result = await response.json();
+      paystackData =
+        (await response.json()) as PaystackSubscriptionResponse;
 
-      if (!response.ok || !result?.status) {
+      if (
+        !response.ok ||
+        !paystackData.status ||
+        !paystackData.data
+      ) {
         return NextResponse.json(
           {
             error:
-              result?.message ||
+              paystackData.message ||
               "Failed to fetch subscription from Paystack",
           },
           { status: 502 }
         );
       }
     } catch (error) {
-      console.error("Paystack subscription lookup failed:", error);
+      console.error(
+        "Paystack subscription lookup failed:",
+        error
+      );
 
       return NextResponse.json(
         {
-          error: "Unable to connect to Paystack",
+          error:
+            "Unable to connect to Paystack",
         },
         { status: 502 }
       );
     }
 
-    const psSub = result.data;
-    const paystackStatus = psSub?.status;
+    const paystackSubscription =
+      paystackData.data;
+
+    const paystackStatus =
+      paystackSubscription.status;
 
     let newStatus: string;
 
@@ -585,41 +809,66 @@ export async function PUT(request: Request) {
         newStatus = "past_due";
         break;
 
+      case "attention":
+        newStatus = "past_due";
+        break;
+
       default:
         newStatus = "payment_failed";
         break;
     }
 
-    const updateData: Record<string, unknown> = {
+    const subscriptionUpdate: Record<
+      string,
+      unknown
+    > = {
       status: newStatus,
     };
 
-    if (psSub?.next_payment_date) {
-      updateData.current_period_end = new Date(
-        psSub.next_payment_date
-      ).toISOString();
+    if (
+      paystackSubscription.next_payment_date
+    ) {
+      const nextPaymentDate =
+        new Date(
+          paystackSubscription.next_payment_date
+        );
+
+      if (
+        !Number.isNaN(
+          nextPaymentDate.getTime()
+        )
+      ) {
+        subscriptionUpdate.current_period_end =
+          nextPaymentDate.toISOString();
+      }
     }
 
-    const { error: updateError } = await adminClient
+    const {
+      error: subscriptionUpdateError,
+    } = await adminClient
       .from("subscriptions")
-      .update(updateData as never)
-      .eq("id", sub.id);
+      .update(subscriptionUpdate)
+      .eq("id", subscription.id)
+      .eq("user_id", userId);
 
-    if (updateError) {
+    if (subscriptionUpdateError) {
       console.error(
         "Failed to update subscription:",
-        updateError
+        subscriptionUpdateError
       );
 
       return NextResponse.json(
-        { error: "Failed to update subscription" },
+        {
+          error:
+            "Failed to update subscription",
+        },
         { status: 500 }
       );
     }
 
     /*
-     * Only verified Paystack subscription state changes the vendor
-     * subscription status here.
+     * Only verified Paystack subscription state
+     * changes the vendor subscription status.
      */
     const profileStatus =
       newStatus === "active"
@@ -629,11 +878,14 @@ export async function PUT(request: Request) {
           ? "free"
           : "payment_failed";
 
-    const { error: profileError } = await adminClient
+    const {
+      error: profileError,
+    } = await adminClient
       .from("vendor_profiles")
       .update({
-        subscription_status: profileStatus,
-      } as never)
+        subscription_status:
+          profileStatus,
+      })
       .eq("user_id", userId);
 
     if (profileError) {
@@ -654,16 +906,25 @@ export async function PUT(request: Request) {
     return NextResponse.json({
       success: true,
       data: {
-        paystack_status: paystackStatus,
-        local_status: newStatus,
-        profile_status: profileStatus,
+        paystack_status:
+          paystackStatus,
+        local_status:
+          newStatus,
+        profile_status:
+          profileStatus,
       },
     });
   } catch (error) {
-    console.error("Subscription re-sync error:", error);
+    console.error(
+      "Subscription re-sync error:",
+      error
+    );
 
     return NextResponse.json(
-      { error: "Internal server error" },
+      {
+        error:
+          "Internal server error",
+      },
       { status: 500 }
     );
   }
