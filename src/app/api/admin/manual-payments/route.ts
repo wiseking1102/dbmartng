@@ -6,6 +6,22 @@ type AdminUser = {
   role: "admin" | "sub_admin";
 };
 
+type UserProfile = {
+  id: string;
+  role: string | null;
+  full_name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+};
+
+type VendorProfile = {
+  id: string;
+  user_id?: string | null;
+  business_name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+};
+
 type ManualPaymentRequest = {
   id: string;
   vendor_id: string;
@@ -65,16 +81,25 @@ async function authenticateAdmin(
       return null;
     }
 
-    if (
-      profile.role !== "admin" &&
-      profile.role !== "sub_admin"
-    ) {
+    /*
+     * The generated Supabase Database type can become stale when
+     * migrations have changed the users table. Cast the returned
+     * profile explicitly so TypeScript does not incorrectly infer
+     * it as `never`.
+     */
+    const role = (
+      profile as unknown as {
+        role: string | null;
+      }
+    ).role;
+
+    if (role !== "admin" && role !== "sub_admin") {
       return null;
     }
 
     return {
       id: user.id,
-      role: profile.role as "admin" | "sub_admin",
+      role,
     };
   } catch (error) {
     console.error("Admin authentication error:", error);
@@ -99,7 +124,9 @@ export async function GET(request: Request) {
 
     if (!admin) {
       return NextResponse.json(
-        { error: "Admin authentication required" },
+        {
+          error: "Admin authentication required",
+        },
         { status: 401 }
       );
     }
@@ -163,22 +190,19 @@ export async function GET(request: Request) {
     const paymentRequests =
       (requests as unknown as ManualPaymentRequest[]) || [];
 
-    /*
-     * Fetch related vendor/user information separately.
-     *
-     * This keeps the endpoint compatible with the current
-     * generated Database type even if relationship metadata
-     * has not been regenerated yet.
-     */
     const userIds = [
       ...new Set(
-        paymentRequests.map((request) => request.user_id)
+        paymentRequests.map(
+          (payment) => payment.user_id
+        )
       ),
     ];
 
     const vendorIds = [
       ...new Set(
-        paymentRequests.map((request) => request.vendor_id)
+        paymentRequests.map(
+          (payment) => payment.vendor_id
+        )
       ),
     ];
 
@@ -223,24 +247,14 @@ export async function GET(request: Request) {
       );
     }
 
-    const users = (usersResult.data || []) as Array<{
-      id: string;
-      full_name?: string | null;
-      email?: string | null;
-      phone?: string | null;
-      role?: string | null;
-    }>;
+    const users =
+      (usersResult.data || []) as unknown as UserProfile[];
 
-    const vendors = (vendorsResult.data || []) as Array<{
-      id: string;
-      user_id?: string | null;
-      business_name?: string | null;
-      email?: string | null;
-      phone?: string | null;
-    }>;
+    const vendors =
+      (vendorsResult.data || []) as unknown as VendorProfile[];
 
-    const enrichedRequests = paymentRequests.map(
-      (payment) => {
+    const enrichedRequests =
+      paymentRequests.map((payment) => {
         const user = users.find(
           (item) => item.id === payment.user_id
         );
@@ -272,8 +286,7 @@ export async function GET(request: Request) {
               }
             : null,
         };
-      }
-    );
+      });
 
     return NextResponse.json({
       success: true,
@@ -309,8 +322,8 @@ export async function GET(request: Request) {
  * }
  *
  * IMPORTANT:
- * - The authenticated admin is determined from the bearer token.
- * - The payment request determines its own user/vendor.
+ * - Authenticated admin comes from the bearer token.
+ * - Payment request determines its own user/vendor.
  * - Client-supplied userId/vendorId are never trusted.
  * - Approval activates Pro only on the server.
  */
@@ -320,7 +333,9 @@ export async function PATCH(request: Request) {
 
     if (!admin) {
       return NextResponse.json(
-        { error: "Admin authentication required" },
+        {
+          error: "Admin authentication required",
+        },
         { status: 401 }
       );
     }
@@ -335,7 +350,9 @@ export async function PATCH(request: Request) {
       body = await request.json();
     } catch {
       return NextResponse.json(
-        { error: "Invalid JSON request body" },
+        {
+          error: "Invalid JSON request body",
+        },
         { status: 400 }
       );
     }
@@ -358,7 +375,9 @@ export async function PATCH(request: Request) {
 
     if (!requestId) {
       return NextResponse.json(
-        { error: "Payment request ID is required" },
+        {
+          error: "Payment request ID is required",
+        },
         { status: 400 }
       );
     }
@@ -375,25 +394,24 @@ export async function PATCH(request: Request) {
 
     const supabase = createAdminClient();
 
-    /*
-     * Load the payment request directly from the database.
-     */
-    const { data: payment, error: paymentError } =
-      await supabase
-        .from("manual_payment_requests")
-        .select(
-          `
-            id,
-            vendor_id,
-            user_id,
-            amount,
-            currency,
-            payment_reference,
-            status
-          `
-        )
-        .eq("id", requestId)
-        .maybeSingle();
+    const {
+      data: payment,
+      error: paymentError,
+    } = await supabase
+      .from("manual_payment_requests")
+      .select(
+        `
+          id,
+          vendor_id,
+          user_id,
+          amount,
+          currency,
+          payment_reference,
+          status
+        `
+      )
+      .eq("id", requestId)
+      .maybeSingle();
 
     if (paymentError) {
       console.error(
@@ -432,23 +450,25 @@ export async function PATCH(request: Request) {
     /*
      * REJECTION
      *
-     * Rejection does not touch subscription access.
+     * Rejection does not modify subscription access.
      */
     if (action === "reject") {
-      const { data: rejectedRequest, error } =
-        await supabase
-          .from("manual_payment_requests")
-          .update({
-            status: "rejected",
-            reviewed_at: new Date().toISOString(),
-            reviewed_by: admin.id,
-            admin_note: adminNote || null,
-            updated_at: new Date().toISOString(),
-          } as never)
-          .eq("id", payment.id)
-          .eq("status", "pending")
-          .select()
-          .maybeSingle();
+      const {
+        data: rejectedRequest,
+        error,
+      } = await supabase
+        .from("manual_payment_requests")
+        .update({
+          status: "rejected",
+          reviewed_at: new Date().toISOString(),
+          reviewed_by: admin.id,
+          admin_note: adminNote || null,
+          updated_at: new Date().toISOString(),
+        } as never)
+        .eq("id", payment.id)
+        .eq("status", "pending")
+        .select()
+        .maybeSingle();
 
       if (error) {
         console.error(
@@ -478,30 +498,34 @@ export async function PATCH(request: Request) {
       return NextResponse.json({
         success: true,
         action: "rejected",
-        message: "Manual payment request rejected.",
+        message:
+          "Manual payment request rejected.",
       });
     }
 
     /*
      * APPROVAL
      *
-     * We first update the payment request itself.
-     * The conditional status=pending prevents double approval.
+     * First mark the payment as approved.
+     * The conditional status=pending prevents
+     * simultaneous/double approval.
      */
-    const { data: approvedRequest, error: approvalError } =
-      await supabase
-        .from("manual_payment_requests")
-        .update({
-          status: "approved",
-          reviewed_at: new Date().toISOString(),
-          reviewed_by: admin.id,
-          admin_note: adminNote || null,
-          updated_at: new Date().toISOString(),
-        } as never)
-        .eq("id", payment.id)
-        .eq("status", "pending")
-        .select()
-        .maybeSingle();
+    const {
+      data: approvedRequest,
+      error: approvalError,
+    } = await supabase
+      .from("manual_payment_requests")
+      .update({
+        status: "approved",
+        reviewed_at: new Date().toISOString(),
+        reviewed_by: admin.id,
+        admin_note: adminNote || null,
+        updated_at: new Date().toISOString(),
+      } as never)
+      .eq("id", payment.id)
+      .eq("status", "pending")
+      .select()
+      .maybeSingle();
 
     if (approvalError) {
       console.error(
@@ -529,17 +553,17 @@ export async function PATCH(request: Request) {
     }
 
     /*
-     * The payment is now approved by an authenticated admin.
+     * The payment has now been explicitly approved by
+     * an authenticated admin.
      *
-     * From this point forward, the server activates Pro.
-     *
-     * IMPORTANT:
-     * The user/vendor IDs come ONLY from the database payment
-     * request, never from the browser.
+     * The user/vendor IDs below come exclusively from
+     * the database payment request.
      */
 
     const now = new Date();
+
     const periodEnd = new Date(now);
+
     periodEnd.setDate(
       periodEnd.getDate() + 30
     );
@@ -547,21 +571,23 @@ export async function PATCH(request: Request) {
     /*
      * Look for an existing Pro subscription.
      */
-    const { data: existingSubscription, error: subLookupError } =
-      await supabase
-        .from("subscriptions")
-        .select(
-          `
-            id,
-            user_id,
-            vendor_id,
-            tier,
-            status
-          `
-        )
-        .eq("user_id", payment.user_id)
-        .eq("tier", "pro")
-        .maybeSingle();
+    const {
+      data: existingSubscription,
+      error: subLookupError,
+    } = await supabase
+      .from("subscriptions")
+      .select(
+        `
+          id,
+          user_id,
+          vendor_id,
+          tier,
+          status
+        `
+      )
+      .eq("user_id", payment.user_id)
+      .eq("tier", "pro")
+      .maybeSingle();
 
     if (subLookupError) {
       console.error(
@@ -569,10 +595,6 @@ export async function PATCH(request: Request) {
         subLookupError
       );
 
-      /*
-       * The payment request is already marked approved.
-       * We do NOT pretend activation succeeded.
-       */
       return NextResponse.json(
         {
           error:
@@ -589,9 +611,8 @@ export async function PATCH(request: Request) {
       user_id: payment.user_id,
 
       /*
-       * Manual payments do not have Paystack codes.
-       * Explicitly clear them so the account is not accidentally
-       * associated with an unrelated Paystack subscription.
+       * Manual payments do not have Paystack
+       * subscription identifiers.
        */
       paystack_customer_code: null,
       paystack_subscription_code: null,
@@ -618,13 +639,18 @@ export async function PATCH(request: Request) {
       const { error } = await supabase
         .from("subscriptions")
         .update(subscriptionData as never)
-        .eq("id", existingSubscription.id);
+        .eq(
+          "id",
+          existingSubscription.id
+        );
 
       subscriptionError = error;
     } else {
       const { error } = await supabase
         .from("subscriptions")
-        .insert(subscriptionData as never);
+        .insert(
+          subscriptionData as never
+        );
 
       subscriptionError = error;
     }
@@ -647,36 +673,40 @@ export async function PATCH(request: Request) {
     }
 
     /*
-     * Update vendor profile ONLY after subscription activation
-     * succeeded.
+     * Update the vendor profile only after the
+     * subscription itself has been activated.
      */
-    const { error: vendorUpdateError } =
-      await supabase
-        .from("vendor_profiles")
-        .update({
-          subscription_status: "pro",
-          trial_decision_made: true,
-          trial_decision: "pro",
-        } as never)
-        .eq("id", payment.vendor_id)
-        .eq("user_id", payment.user_id);
+    const {
+      error: vendorUpdateError,
+    } = await supabase
+      .from("vendor_profiles")
+      .update({
+        subscription_status: "active",
+        updated_at: now.toISOString(),
+      } as never)
+      .eq("id", payment.vendor_id);
 
     if (vendorUpdateError) {
       console.error(
-        "Vendor Pro status update error:",
+        "Vendor subscription status update error:",
         vendorUpdateError
       );
 
-      return NextResponse.json(
-        {
-          error:
-            "Payment was approved and subscription activated, but vendor profile status could not be updated.",
-          paymentApproved: true,
-          activated: true,
-          profileUpdated: false,
-        },
-        { status: 500 }
-      );
+      /*
+       * The subscription was successfully activated.
+       * Do not report the entire operation as failed.
+       * The admin can repair the profile status without
+       * charging the vendor again.
+       */
+      return NextResponse.json({
+        success: true,
+        action: "approved",
+        paymentApproved: true,
+        activated: true,
+        profileUpdated: false,
+        warning:
+          "Pro was activated, but the vendor profile status could not be updated.",
+      });
     }
 
     return NextResponse.json({
@@ -687,15 +717,6 @@ export async function PATCH(request: Request) {
       profileUpdated: true,
       message:
         "Manual payment approved and Pro subscription activated.",
-      data: {
-        requestId: payment.id,
-        userId: payment.user_id,
-        vendorId: payment.vendor_id,
-        amount: Number(payment.amount),
-        currency: payment.currency || "NGN",
-        periodStart: now.toISOString(),
-        periodEnd: periodEnd.toISOString(),
-      },
     });
   } catch (error) {
     console.error(
