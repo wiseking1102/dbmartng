@@ -30,6 +30,15 @@ type CreatedPaymentRequest = {
   submitted_at: string;
 };
 
+/**
+ * The generated Database type currently does not expose a usable
+ * Insert type for manual_payment_requests. Keep this route server-side
+ * and use the admin client without the broken generated table typing.
+ */
+function getDb() {
+  return createAdminClient() as any;
+}
+
 async function getAuthenticatedUser(
   request: Request
 ): Promise<AuthUser | null> {
@@ -48,7 +57,7 @@ async function getAuthenticatedUser(
   }
 
   try {
-    const adminClient = createAdminClient();
+    const adminClient = getDb();
 
     const {
       data: authData,
@@ -75,12 +84,6 @@ async function getAuthenticatedUser(
 
 export async function POST(request: Request) {
   try {
-    /*
-     * Authentication is always derived from the
-     * server-verified bearer token.
-     *
-     * Never trust user_id/vendor_id from the browser.
-     */
     const user = await getAuthenticatedUser(request);
 
     if (!user) {
@@ -92,11 +95,8 @@ export async function POST(request: Request) {
       );
     }
 
-    const adminClient = createAdminClient();
+    const adminClient = getDb();
 
-    /*
-     * Resolve the vendor profile from the authenticated user.
-     */
     const {
       data: vendorData,
       error: vendorError,
@@ -132,13 +132,6 @@ export async function POST(request: Request) {
     const vendor =
       vendorData as VendorProfile;
 
-    /*
-     * Read the body only for compatibility with the
-     * existing frontend.
-     *
-     * The amount is NOT trusted. The server determines
-     * the actual Pro price.
-     */
     let body: Record<string, unknown> = {};
 
     try {
@@ -152,17 +145,13 @@ export async function POST(request: Request) {
         body = parsedBody as Record<string, unknown>;
       }
     } catch {
-      /*
-       * Empty request bodies are allowed because the
-       * server already knows the Pro price.
-       */
+      body = {};
     }
 
     /*
-     * If the client sends an amount, validate it.
-     *
-     * Regardless of the supplied amount, the inserted
-     * payment request always uses PRO_PRICE.
+     * The amount is ultimately controlled by the server.
+     * If the client sends an amount, only accept the exact
+     * current Pro price.
      */
     if (body.amount !== undefined) {
       const requestedAmount =
@@ -184,11 +173,8 @@ export async function POST(request: Request) {
     }
 
     /*
-     * Prevent duplicate pending requests.
-     *
-     * The result is explicitly typed so stale/generated
-     * Supabase database types cannot turn the result
-     * into `never`.
+     * Prevent duplicate pending manual payment requests
+     * for the same authenticated vendor.
      */
     const {
       data: existingData,
@@ -239,15 +225,9 @@ export async function POST(request: Request) {
     }
 
     /*
-     * Create the manual payment request.
-     *
-     * Every important value is server-controlled:
-     * - user_id
-     * - vendor_id
-     * - amount
-     * - currency
-     * - bank details
-     * - status
+     * All important payment details are generated server-side.
+     * The browser cannot choose the receiving account,
+     * vendor ID, user ID, or payment amount.
      */
     const {
       data: paymentRequestData,
@@ -287,11 +267,6 @@ export async function POST(request: Request) {
       );
     }
 
-    /*
-     * Explicit type cast avoids the generated Database
-     * type becoming `never` when this table is newer
-     * than the generated Supabase types.
-     */
     const paymentRequest =
       paymentRequestData as CreatedPaymentRequest;
 
