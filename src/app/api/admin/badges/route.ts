@@ -1,10 +1,20 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { authenticateAdmin } from "@/lib/auth/admin-auth";
 import { recordSocialProof } from "@/lib/social-proof";
 
 // GET /api/admin/badges — Fetch all vendors with their badge status
 export async function GET(request: Request) {
   try {
+    // Server-side authorization: identity from token, role from DB
+    const admin = await authenticateAdmin(request);
+
+    if (!admin) {
+      return NextResponse.json(
+        { error: "Admin authentication required" },
+        { status: 401 }
+      );
+    }
     const { searchParams } = new URL(request.url);
     const status = searchParams.get("status"); // verified | unverified | all
 
@@ -57,6 +67,15 @@ export async function GET(request: Request) {
 // PATCH /api/admin/badges — Grant or revoke a verified badge
 export async function PATCH(request: Request) {
   try {
+    // Server-side authorization: identity from token, role from DB
+    const admin = await authenticateAdmin(request);
+
+    if (!admin) {
+      return NextResponse.json(
+        { error: "Admin authentication required" },
+        { status: 401 }
+      );
+    }
     const body = await request.json();
     const { vendorId, action, adminUserId } = body;
     // action: "grant" | "revoke"

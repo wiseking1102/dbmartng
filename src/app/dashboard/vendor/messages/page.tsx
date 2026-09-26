@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { supabase } from "@/lib/supabase/client";
+import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Header } from "@/components/layout/header";
@@ -48,6 +50,7 @@ export default function VendorMessagesPage() {
   const [loading, setLoading] = useState(true);
   const [messageInput, setMessageInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [sending, setSending] = useState(false);
 
   useEffect(() => {
     if (!authLoading && (!user || role !== "vendor")) {
@@ -72,6 +75,89 @@ export default function VendorMessagesPage() {
   useEffect(() => {
     if (user) fetchThreads();
   }, [user, fetchThreads]);
+
+  // Load the selected thread's messages
+  const loadMessages = useCallback(async (buyerId: string) => {
+    if (!user) return;
+
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) return;
+
+      const response = await fetch(
+        `/api/messages?conversationUserId=${encodeURIComponent(buyerId)}`,
+        {
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          cache: "no-store",
+        }
+      );
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setMessages(data.data || []);
+      }
+    } catch {
+      // Silently handle — empty state will show
+    }
+  }, [user, supabase]);
+
+  useEffect(() => {
+    if (selectedThread) {
+      setMessages([]);
+      loadMessages(selectedThread);
+    }
+  }, [selectedThread, loadMessages]);
+
+  // Reply to the selected buyer
+  const handleSendMessage = async () => {
+    if (!user || !selectedThread || !messageInput.trim()) return;
+
+    setSending(true);
+
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        toast.error("Your session has expired. Please sign in again.");
+        return;
+      }
+
+      const response = await fetch("/api/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          conversationUserId: selectedThread,
+          body: messageInput.trim(),
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to send message");
+      }
+
+      setMessageInput("");
+      await loadMessages(selectedThread);
+      await fetchThreads();
+      toast.success("Reply sent");
+    } catch (error: any) {
+      toast.error(error.message || "Unable to send reply");
+    } finally {
+      setSending(false);
+    }
+  };
 
   const selectedBuyer = threads.find((t) => t.id === selectedThread);
 
@@ -298,7 +384,8 @@ export default function VendorMessagesPage() {
                         <Button
                           variant="gold"
                           size="md"
-                          disabled={!messageInput.trim()}
+                          disabled={!messageInput.trim() || sending}
+                          onClick={handleSendMessage}
                         >
                           <Send className="h-4 w-4" />
                         </Button>

@@ -1,10 +1,20 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { authenticateAdmin } from "@/lib/auth/admin-auth";
 import { matchListingAgainstSavedSearches } from "@/lib/search-matcher";
 
 // GET /api/admin/listings — Fetch all listings, optionally filtered by status
 export async function GET(request: Request) {
   try {
+    // Server-side authorization: identity from token, role from DB
+    const admin = await authenticateAdmin(request);
+
+    if (!admin) {
+      return NextResponse.json(
+        { error: "Admin authentication required" },
+        { status: 401 }
+      );
+    }
     const { searchParams } = new URL(request.url);
     const status = searchParams.get("status"); // pending_review | approved | rejected | flagged | all
 
@@ -53,6 +63,15 @@ export async function GET(request: Request) {
 // PATCH /api/admin/listings — Approve, reject, or flag a listing
 export async function PATCH(request: Request) {
   try {
+    // Server-side authorization: identity from token, role from DB
+    const admin = await authenticateAdmin(request);
+
+    if (!admin) {
+      return NextResponse.json(
+        { error: "Admin authentication required" },
+        { status: 401 }
+      );
+    }
     const body = await request.json();
     const { listingId, action, adminUserId, reason } = body;
     // action: "approve" | "reject" | "flag" | "clear_flag"

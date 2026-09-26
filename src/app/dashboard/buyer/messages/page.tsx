@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { supabase } from "@/lib/supabase/client";
+import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Header } from "@/components/layout/header";
@@ -46,6 +48,7 @@ export default function BuyerMessagesPage() {
   const [loading, setLoading] = useState(true);
   const [messageInput, setMessageInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [sending, setSending] = useState(false);
 
   useEffect(() => {
     if (!authLoading && (!user || role !== "buyer")) {
@@ -70,6 +73,89 @@ export default function BuyerMessagesPage() {
   useEffect(() => {
     if (user) fetchConversations();
   }, [user, fetchConversations]);
+
+  // Load the selected conversation's messages
+  const loadMessages = useCallback(async (conversationId: string) => {
+    if (!user) return;
+
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) return;
+
+      const response = await fetch(
+        `/api/messages?conversationUserId=${encodeURIComponent(conversationId)}`,
+        {
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          cache: "no-store",
+        }
+      );
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setMessages(data.data || []);
+      }
+    } catch {
+      // Silently handle — empty state will show
+    }
+  }, [user, supabase]);
+
+  useEffect(() => {
+    if (selectedConversation) {
+      setMessages([]);
+      loadMessages(selectedConversation);
+    }
+  }, [selectedConversation, loadMessages]);
+
+  // Send a message in the selected conversation
+  const handleSendMessage = async () => {
+    if (!user || !selectedConversation || !messageInput.trim()) return;
+
+    setSending(true);
+
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        toast.error("Your session has expired. Please sign in again.");
+        return;
+      }
+
+      const response = await fetch("/api/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          conversationUserId: selectedConversation,
+          body: messageInput.trim(),
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to send message");
+      }
+
+      setMessageInput("");
+      await loadMessages(selectedConversation);
+      await fetchConversations();
+      toast.success("Message sent");
+    } catch (error: any) {
+      toast.error(error.message || "Unable to send message");
+    } finally {
+      setSending(false);
+    }
+  };
 
   const selectedVendor = conversations.find((c) => c.id === selectedConversation);
 
@@ -266,7 +352,8 @@ export default function BuyerMessagesPage() {
                         <Button
                           variant="gold"
                           size="md"
-                          disabled={!messageInput.trim()}
+                          disabled={!messageInput.trim() || sending}
+                          onClick={handleSendMessage}
                         >
                           <Send className="h-4 w-4" />
                         </Button>

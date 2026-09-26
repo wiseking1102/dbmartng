@@ -1,11 +1,21 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { authenticateAdmin } from "@/lib/auth/admin-auth";
 import { recordSocialProof } from "@/lib/social-proof";
 import { matchVendorAgainstSavedSearches } from "@/lib/search-matcher";
 
 // GET /api/admin/vendors — Fetch all vendor applications with pending/new status
 export async function GET(request: Request) {
   try {
+    // Server-side authorization: identity from token, role from DB
+    const admin = await authenticateAdmin(request);
+
+    if (!admin) {
+      return NextResponse.json(
+        { error: "Admin authentication required" },
+        { status: 401 }
+      );
+    }
     const { searchParams } = new URL(request.url);
     const status = searchParams.get("status"); // optional filter: all | pending | verified
 
@@ -49,6 +59,15 @@ export async function GET(request: Request) {
 // PATCH /api/admin/vendors — Approve or reject a vendor application
 export async function PATCH(request: Request) {
   try {
+    // Server-side authorization: identity from token, role from DB
+    const admin = await authenticateAdmin(request);
+
+    if (!admin) {
+      return NextResponse.json(
+        { error: "Admin authentication required" },
+        { status: 401 }
+      );
+    }
     const body = await request.json();
     const { vendorId, action, adminUserId, reason } = body;
     // action: "approve" | "reject"

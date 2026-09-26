@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { authenticateAdmin } from "@/lib/auth/admin-auth";
 
 // ─── AD REQUESTS ─────────────────────────────────────────────
 
@@ -7,6 +8,15 @@ import { createAdminClient } from "@/lib/supabase/admin";
 // GET /api/admin/ads?tab=company — Fetch company ads
 export async function GET(request: Request) {
   try {
+    // Server-side authorization: identity from token, role from DB
+    const admin = await authenticateAdmin(request);
+
+    if (!admin) {
+      return NextResponse.json(
+        { error: "Admin authentication required" },
+        { status: 401 }
+      );
+    }
     const { searchParams } = new URL(request.url);
     const tab = searchParams.get("tab") || "requests";
     const status = searchParams.get("status");
@@ -69,6 +79,15 @@ export async function GET(request: Request) {
 // PATCH /api/admin/ads — Approve or reject an ad request
 export async function PATCH(request: Request) {
   try {
+    // Server-side authorization: identity from token, role from DB
+    const admin = await authenticateAdmin(request);
+
+    if (!admin) {
+      return NextResponse.json(
+        { error: "Admin authentication required" },
+        { status: 401 }
+      );
+    }
     const body = await request.json();
     const { adRequestId, action, adminUserId, reason } = body;
     // action: "approve" | "reject"
@@ -229,6 +248,15 @@ export async function PATCH(request: Request) {
 // POST /api/admin/ads?tab=company — Create a company ad
 export async function POST(request: Request) {
   try {
+    // Server-side authorization: identity from token, role from DB
+    const admin = await authenticateAdmin(request);
+
+    if (!admin) {
+      return NextResponse.json(
+        { error: "Admin authentication required" },
+        { status: 401 }
+      );
+    }
     const { searchParams } = new URL(request.url);
     const tab = searchParams.get("tab");
 
@@ -298,6 +326,15 @@ export async function POST(request: Request) {
 // PUT /api/admin/ads?tab=company — Update a company ad
 export async function PUT(request: Request) {
   try {
+    // Server-side authorization: identity from token, role from DB
+    const admin = await authenticateAdmin(request);
+
+    if (!admin) {
+      return NextResponse.json(
+        { error: "Admin authentication required" },
+        { status: 401 }
+      );
+    }
     const { searchParams } = new URL(request.url);
     const tab = searchParams.get("tab");
 
@@ -385,6 +422,15 @@ export async function PUT(request: Request) {
 // DELETE /api/admin/ads?tab=company — Delete a company ad
 export async function DELETE(request: Request) {
   try {
+    // Server-side authorization: identity from token, role from DB
+    const admin = await authenticateAdmin(request);
+
+    if (!admin) {
+      return NextResponse.json(
+        { error: "Admin authentication required" },
+        { status: 401 }
+      );
+    }
     const { searchParams } = new URL(request.url);
     const tab = searchParams.get("tab");
     const adId = searchParams.get("adId");

@@ -1,25 +1,17 @@
 /**
  * POST /api/upload
  *
- * Uploads a file to Supabase Storage.
- * Accepts multipart/form-data with fields:
- *   - file: File to upload
- *   - bucket: Storage bucket name (e.g. "listing-images", "vendor-logos")
- *   - path: Optional custom path override (default: auto-generated)
+ * Uploads an image to Supabase Storage on behalf of the
+ * AUTHENTICATED user. Files are always stored under the
+ * authenticated user's path — the browser cannot choose
+ * whose folder it writes into.
  *
- * Returns the public URL of the uploaded file.
- *
- * @example
- *   const formData = new FormData();
- *   formData.append("file", file);
- *   formData.append("bucket", "listing-images");
- *   formData.append("userId", user.id);
- *
- *   const res = await fetch("/api/upload", { method: "POST", body: formData });
- *   const { url } = await res.json();
+ * Accepts multipart/form-data:
+ *   - file: image file (JPEG/PNG/WebP/AVIF/GIF, max 5MB)
+ *   - bucket: one of the allowed buckets (default: listing-images)
  */
-
 import { NextResponse } from "next/server";
+import { getBearerUser } from "@/lib/auth/server-auth";
 import {
   uploadFile,
   generateFilePath,
@@ -30,10 +22,23 @@ import {
 
 export async function POST(request: Request) {
   try {
+    // ─── Authentication: uploads require a signed-in user ────
+    const user = await getBearerUser(request);
+
+    if (!user) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 }
+      );
+    }
+
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
-    const bucket = (formData.get("bucket") as string) || STORAGE_BUCKETS.LISTING_IMAGES;
-    const userId = (formData.get("userId") as string) || "anonymous";
+    const bucketRaw = formData.get("bucket");
+    const bucket =
+      typeof bucketRaw === "string" && bucketRaw
+        ? bucketRaw
+        : STORAGE_BUCKETS.LISTING_IMAGES;
 
     // ─── Validate file exists ───
     if (!file) {
@@ -65,7 +70,7 @@ export async function POST(request: Request) {
 
     // ─── Validate bucket ───
     const validBuckets = Object.values(STORAGE_BUCKETS);
-    if (!validBuckets.includes(bucket as any)) {
+    if (!validBuckets.includes(bucket as (typeof validBuckets)[number])) {
       return NextResponse.json(
         {
           error: `Invalid bucket "${bucket}". Valid: ${validBuckets.join(", ")}`,
@@ -74,15 +79,16 @@ export async function POST(request: Request) {
       );
     }
 
-    // ─── Generate path & upload ───
-    const filePath = generateFilePath(userId, file.name);
+    // ─── Path is always under the authenticated user's folder ──
+    const filePath = generateFilePath(user.id, file.name);
     const buffer = await file.arrayBuffer();
 
     const result = await uploadFile(bucket, filePath, buffer, file.type);
 
     if (result.error) {
+      console.error("[upload] storage error:", result.error);
       return NextResponse.json(
-        { error: result.error },
+        { error: "Upload failed. Please try again." },
         { status: 500 }
       );
     }
@@ -101,5 +107,3 @@ export async function POST(request: Request) {
     );
   }
 }
-
-

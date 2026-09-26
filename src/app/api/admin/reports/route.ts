@@ -1,9 +1,19 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { authenticateAdmin } from "@/lib/auth/admin-auth";
 
 // GET /api/admin/reports?status=open — Fetch vendor complaints
 export async function GET(request: Request) {
   try {
+    // Server-side authorization: identity from token, role from DB
+    const admin = await authenticateAdmin(request);
+
+    if (!admin) {
+      return NextResponse.json(
+        { error: "Admin authentication required" },
+        { status: 401 }
+      );
+    }
     const { searchParams } = new URL(request.url);
     const status = searchParams.get("status");
 
@@ -63,6 +73,15 @@ export async function GET(request: Request) {
 // PATCH /api/admin/reports — Update complaint status
 export async function PATCH(request: Request) {
   try {
+    // Server-side authorization: identity from token, role from DB
+    const admin = await authenticateAdmin(request);
+
+    if (!admin) {
+      return NextResponse.json(
+        { error: "Admin authentication required" },
+        { status: 401 }
+      );
+    }
     const body = await request.json();
     const { complaintId, action, adminUserId, reason } = body;
     // action: "investigate" | "resolve" | "dismiss"

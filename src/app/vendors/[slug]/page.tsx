@@ -28,6 +28,7 @@ import { whatsappDeepLink } from "@/lib/utils";
 import { LocalBusinessJsonLd } from "@/components/seo/JsonLd";
 import { VendorProfileAnimations } from "@/components/animations/VendorProfileAnimations";
 import StaggerEntrance from "@/components/animations/StaggerEntrance";
+import { toast } from "sonner";
 
 // Sample data — will be replaced with Supabase queries
 const vendor = {
@@ -116,6 +117,59 @@ export default function VendorProfilePage() {
   const params = useParams();
   const [messageText, setMessageText] = useState("");
   const [showQR, setShowQR] = useState(false);
+  const [senderName, setSenderName] = useState("");
+  const [senderEmail, setSenderEmail] = useState("");
+  const [sendingMessage, setSendingMessage] = useState(false);
+  const [messageSent, setMessageSent] = useState(false);
+
+  // Submit the public "Send a Message" form to the secure messaging API
+  const handleMessageSubmit = async () => {
+    if (!messageText.trim()) {
+      return;
+    }
+
+    setSendingMessage(true);
+
+    try {
+      const { createClient } = await import("@/lib/supabase/client");
+      const supabase = createClient();
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        toast.error("Please sign in to send a message to this vendor.");
+        return;
+      }
+
+      const response = await fetch("/api/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          vendorId: vendor.id,
+          body: messageText.trim(),
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to send message");
+      }
+
+      setMessageText("");
+      setMessageSent(true);
+      toast.success("Message sent to " + vendor.name);
+    } catch (error: any) {
+      toast.error(error.message || "Unable to send message");
+    } finally {
+      setSendingMessage(false);
+    }
+  };
 
   return (
     <>
@@ -387,19 +441,31 @@ export default function VendorProfilePage() {
                     <input
                       type="text"
                       placeholder="Your name"
+                      value={senderName}
+                      onChange={(e) => setSenderName(e.target.value)}
                       className="w-full h-10 px-3 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold focus:border-transparent"
                     />
                     <input
                       type="email"
                       placeholder="Your email"
+                      value={senderEmail}
+                      onChange={(e) => setSenderEmail(e.target.value)}
                       className="w-full h-10 px-3 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold focus:border-transparent"
                     />
                     <textarea
                       rows={4}
                       placeholder="Write your message..."
+                      value={messageText}
+                      onChange={(e) => setMessageText(e.target.value)}
                       className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold focus:border-transparent resize-none"
                     />
-                    <Button variant="gold" size="sm" className="w-full">
+                    <Button
+                      variant="gold"
+                      size="sm"
+                      className="w-full"
+                      onClick={handleMessageSubmit}
+                      disabled={sendingMessage || !messageText.trim()}
+                    >
                       <Send className="h-4 w-4" />
                       Send Message
                     </Button>

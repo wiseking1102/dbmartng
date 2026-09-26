@@ -1,15 +1,28 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getBearerUser } from "@/lib/auth/server-auth";
 import { recordSocialProof } from "@/lib/social-proof";
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
-    const { userId, businessName, slug, description, categoryId, email, phone, whatsappNumber, website, address, city, state } = body;
+    // Identity comes from the session token, never the body
+    const authUser = await getBearerUser(request);
 
-    if (!userId || !businessName || !slug) {
+    if (!authUser) {
       return NextResponse.json(
-        { error: "userId, businessName, and slug are required" },
+        { error: "Authentication required" },
+        { status: 401 }
+      );
+    }
+
+    const userId = authUser.id;
+
+    const body = await request.json();
+    const { businessName, slug, description, categoryId, email, phone, whatsappNumber, website, address, city, state } = body;
+
+    if (!businessName || !slug) {
+      return NextResponse.json(
+        { error: "businessName and slug are required" },
         { status: 400 }
       );
     }
@@ -22,7 +35,6 @@ export async function POST(request: Request) {
       .select("id")
       .eq("slug", slug)
       .maybeSingle() as never) as unknown as { data: { id: string } | null };
-
     if (existingSlug) {
       return NextResponse.json(
         { error: "A business with this name already exists. Please use a different name." },
@@ -89,15 +101,26 @@ export async function POST(request: Request) {
 
 export async function PUT(request: Request) {
   try {
-    const body = await request.json();
-    const { userId, ...profileData } = body;
+    // Identity comes from the session token, never the body
+    const authUser = await getBearerUser(request);
 
-    if (!userId) {
+    if (!authUser) {
       return NextResponse.json(
-        { error: "userId is required" },
-        { status: 400 }
+        { error: "Authentication required" },
+        { status: 401 }
       );
     }
+
+    const userId = authUser.id;
+
+    const body = await request.json();
+    const { ...profileData } = body;
+
+    // Never allow the client to change ownership or role fields
+    delete profileData.user_id;
+    delete profileData.id;
+    delete profileData.role;
+
 
     const adminClient = createAdminClient();
 

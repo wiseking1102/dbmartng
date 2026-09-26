@@ -1,10 +1,20 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ALL_PERMISSION_KEYS } from "@/lib/permissions";
+import { authenticateAdmin } from "@/lib/auth/admin-auth";
 
 // GET /api/admin/sub-admins — Fetch all sub-admins with user info and permissions
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const caller = await authenticateAdmin(request);
+
+    if (!caller) {
+      return NextResponse.json(
+        { error: "Admin authentication required" },
+        { status: 401 }
+      );
+    }
+
     const adminClient = createAdminClient();
 
     const { data: subAdmins, error } = await adminClient
@@ -38,6 +48,22 @@ export async function GET() {
 // POST /api/admin/sub-admins — Invite a new sub-admin
 export async function POST(request: Request) {
   try {
+    const caller = await authenticateAdmin(request);
+
+    if (!caller) {
+      return NextResponse.json(
+        { error: "Admin authentication required" },
+        { status: 401 }
+      );
+    }
+
+    if (caller.role !== "admin") {
+      return NextResponse.json(
+        { error: "Only full admins can manage sub-admins" },
+        { status: 403 }
+      );
+    }
+
     const body = await request.json();
     const { email, invitedBy, permissions } = body;
     // email: email of the user to promote to sub-admin (must exist in users table)
@@ -237,6 +263,23 @@ export async function POST(request: Request) {
 // PATCH /api/admin/sub-admins — Update sub-admin status or permissions
 export async function PATCH(request: Request) {
   try {
+    const caller = await authenticateAdmin(request);
+
+    if (!caller) {
+      return NextResponse.json(
+        { error: "Admin authentication required" },
+        { status: 401 }
+      );
+    }
+
+
+    if (caller.role !== "admin") {
+      return NextResponse.json(
+        { error: "Only full admins can manage sub-admins" },
+        { status: 403 }
+      );
+    }
+
     const body = await request.json();
     const { subAdminId, action, adminUserId, permissions } = body;
     // action: "activate" | "revoke" | "update_permissions"
