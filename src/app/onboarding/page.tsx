@@ -68,10 +68,12 @@ export default function VendorOnboardingPage() {
     useState<OnboardingStep>("business");
 
   const [loading, setLoading] = useState(false);
-  const [categoriesLoading, setCategoriesLoading] = useState(true);
+  const [categoriesLoading, setCategoriesLoading] =
+    useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [categories, setCategories] = useState<Category[]>([]);
+  const [categories, setCategories] =
+    useState<Category[]>([]);
 
   // Form state
   const [businessName, setBusinessName] = useState("");
@@ -149,32 +151,60 @@ export default function VendorOnboardingPage() {
       setCategoriesLoading(true);
 
       try {
-        const { data, error: categoryError } = await supabase
-          .from("categories")
-          .select("id, name, slug, type, description")
-          .eq("is_active", true)
-          .order("sort_order", { ascending: true })
-          .order("name", { ascending: true });
+        const { data, error: categoryError } =
+          await supabase
+            .from("categories")
+            .select(
+              "id, name, slug, type, description"
+            )
+            .eq("is_active", true)
+            .order("sort_order", {
+              ascending: true,
+            })
+            .order("name", {
+              ascending: true,
+            });
 
         if (categoryError) {
           throw categoryError;
         }
 
-        const normalizedCategories: Category[] = (
-          data ?? []
-        )
-          .filter(
-            (category) =>
-              category.type === "goods" ||
-              category.type === "service"
-          )
-          .map((category) => ({
-            id: category.id,
-            name: category.name,
-            slug: category.slug,
-            type: category.type,
-            description: category.description,
-          }));
+        /*
+         * Supabase's generated Database type currently
+         * resolves this query result incorrectly as never[].
+         *
+         * Explicitly describe the returned rows so TypeScript
+         * can correctly narrow category.type.
+         */
+        type CategoryRow = {
+          id: string;
+          name: string;
+          slug: string;
+          type: string | null;
+          description: string | null;
+        };
+
+        const categoryRows =
+          (data ?? []) as unknown as CategoryRow[];
+
+        const normalizedCategories: Category[] =
+          categoryRows
+            .filter(
+              (
+                category
+              ): category is CategoryRow & {
+                type: "goods" | "service";
+              } =>
+                category.type === "goods" ||
+                category.type === "service"
+            )
+            .map((category) => ({
+              id: category.id,
+              name: category.name,
+              slug: category.slug,
+              type: category.type,
+              description: category.description,
+            }));
 
         if (!cancelled) {
           setCategories(normalizedCategories);
@@ -236,17 +266,22 @@ export default function VendorOnboardingPage() {
    */
   const handleSubmitCategory = () => {
     if (!categoryType) {
-      setError("Please choose what your business offers.");
+      setError(
+        "Please choose what your business offers."
+      );
       return;
     }
 
     if (!selectedCategory) {
-      setError("Please select a specific business category.");
+      setError(
+        "Please select a specific business category."
+      );
       return;
     }
 
     const categoryExists = categories.some(
-      (category) => category.id === selectedCategory
+      (category) =>
+        category.id === selectedCategory
     );
 
     if (!categoryExists) {
@@ -266,7 +301,10 @@ export default function VendorOnboardingPage() {
    * ------------------------------------------------------------
    */
   const handleSubmitContact = () => {
-    if (!contactPhone.trim() && !whatsappNumber.trim()) {
+    if (
+      !contactPhone.trim() &&
+      !whatsappNumber.trim()
+    ) {
       setError(
         "Please provide at least one phone or WhatsApp number."
       );
@@ -292,7 +330,8 @@ export default function VendorOnboardingPage() {
     }
 
     setOtpPhone(
-      whatsappNumber.trim() || contactPhone.trim()
+      whatsappNumber.trim() ||
+        contactPhone.trim()
     );
 
     setCurrentStep("verify");
@@ -320,7 +359,9 @@ export default function VendorOnboardingPage() {
       contactPhone.trim();
 
     if (!phoneToUse) {
-      setError("Please enter a phone number first.");
+      setError(
+        "Please enter a phone number first."
+      );
       return;
     }
 
@@ -349,7 +390,10 @@ export default function VendorOnboardingPage() {
       setOtpCode("");
       setOtpVerified(false);
     } catch (err: unknown) {
-      console.error("Phone OTP error:", err);
+      console.error(
+        "Phone OTP error:",
+        err
+      );
 
       setError(
         err instanceof Error
@@ -372,13 +416,20 @@ export default function VendorOnboardingPage() {
    * authenticated user instead of signing another user in.
    */
   const handleVerifyOTP = async () => {
-    if (!otpCode || otpCode.length !== 6) {
-      setError("Please enter the 6-digit verification code.");
+    if (
+      !otpCode ||
+      otpCode.length !== 6
+    ) {
+      setError(
+        "Please enter the 6-digit verification code."
+      );
       return;
     }
 
     if (!otpPhone.trim()) {
-      setError("No phone number is waiting for verification.");
+      setError(
+        "No phone number is waiting for verification."
+      );
       return;
     }
 
@@ -386,12 +437,14 @@ export default function VendorOnboardingPage() {
     setError(null);
 
     try {
-      const { data, error: verifyError } =
-        await supabase.auth.verifyOtp({
-          phone: otpPhone.trim(),
-          token: otpCode,
-          type: "phone_change",
-        });
+      const {
+        data,
+        error: verifyError,
+      } = await supabase.auth.verifyOtp({
+        phone: otpPhone.trim(),
+        token: otpCode,
+        type: "phone_change",
+      });
 
       if (verifyError) {
         throw verifyError;
@@ -402,8 +455,11 @@ export default function VendorOnboardingPage() {
        * after the phone-change verification.
        */
       const {
-        data: { user: refreshedUser },
-      } = await supabase.auth.getUser();
+        data: {
+          user: refreshedUser,
+        },
+      } =
+        await supabase.auth.getUser();
 
       if (!refreshedUser) {
         throw new Error(
@@ -413,7 +469,8 @@ export default function VendorOnboardingPage() {
 
       if (
         !data?.user?.phone &&
-        refreshedUser.phone !== otpPhone.trim()
+        refreshedUser.phone !==
+          otpPhone.trim()
       ) {
         throw new Error(
           "Phone verification could not be confirmed. Please try again."
@@ -423,7 +480,10 @@ export default function VendorOnboardingPage() {
       setOtpVerified(true);
       setCurrentStep("share");
     } catch (err: unknown) {
-      console.error("Phone verification error:", err);
+      console.error(
+        "Phone verification error:",
+        err
+      );
 
       setError(
         err instanceof Error
@@ -440,139 +500,160 @@ export default function VendorOnboardingPage() {
    * Create vendor profile
    * ------------------------------------------------------------
    */
-  const handleCompleteOnboarding = async () => {
-    if (!user) {
-      setError(
-        "Your session has expired. Please sign in again."
-      );
-      return;
-    }
-
-    if (!otpVerified) {
-      setError(
-        "Please verify your phone number before completing onboarding."
-      );
-      setCurrentStep("verify");
-      return;
-    }
-
-    if (!selectedCategory) {
-      setError("Please select a business category.");
-      setCurrentStep("category");
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-
-    try {
-      /*
-       * Generate the slug once and preserve it.
-       *
-       * The old code generated one slug during creation but then
-       * displayed a different slug during sharing/preview.
-       */
-      const baseSlug =
-        slugify(businessName.trim()) || "business";
-
-      const uniqueSlug =
-        `${baseSlug}-${Math.random()
-          .toString(36)
-          .slice(2, 7)}`;
-
-      /*
-       * Get the current session.
-       *
-       * This is the critical fix for the previous 401 error.
-       */
-      const {
-        data: { session },
-        error: sessionError,
-      } = await supabase.auth.getSession();
-
-      if (sessionError || !session?.access_token) {
-        throw new Error(
+  const handleCompleteOnboarding =
+    async () => {
+      if (!user) {
+        setError(
           "Your session has expired. Please sign in again."
         );
+        return;
       }
 
-      const response = await fetch(
-        "/api/vendor/create-profile",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${session.access_token}`,
-          },
-          body: JSON.stringify({
-            businessName: businessName.trim(),
-            slug: uniqueSlug,
-            description:
-              description.trim() || null,
-            categoryId: selectedCategory,
-            email:
-              contactEmail.trim() || null,
-            phone:
-              contactPhone.trim() || null,
-            whatsappNumber:
-              whatsappNumber.trim() || null,
-            website:
-              website.trim() || null,
-            address:
-              address.trim() || null,
-            city:
-              city.trim() || null,
-            state:
-              state.trim() || null,
-
-            /*
-             * The API verifies this against the actual
-             * authenticated Supabase user's phone.
-             */
-            verifiedPhone: otpPhone.trim(),
-          }),
-        }
-      );
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(
-          result.error ||
-            "Failed to create vendor profile."
+      if (!otpVerified) {
+        setError(
+          "Please verify your phone number before completing onboarding."
         );
+        setCurrentStep("verify");
+        return;
       }
 
-      setCreatedSlug(
-        result.slug || uniqueSlug
-      );
+      if (!selectedCategory) {
+        setError(
+          "Please select a business category."
+        );
+        setCurrentStep("category");
+        return;
+      }
 
-      setCurrentStep("complete");
-    } catch (err: unknown) {
-      console.error(
-        "Vendor onboarding completion error:",
-        err
-      );
+      setLoading(true);
+      setError(null);
 
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Failed to complete onboarding."
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
+      try {
+        /*
+         * Generate the slug once and preserve it.
+         *
+         * The old code generated one slug during creation but then
+         * displayed a different slug during sharing/preview.
+         */
+        const baseSlug =
+          slugify(businessName.trim()) ||
+          "business";
+
+        const uniqueSlug =
+          `${baseSlug}-${Math.random()
+            .toString(36)
+            .slice(2, 7)}`;
+
+        /*
+         * Get the current session.
+         *
+         * This is the critical fix for the previous 401 error.
+         */
+        const {
+          data: { session },
+          error: sessionError,
+        } =
+          await supabase.auth.getSession();
+
+        if (
+          sessionError ||
+          !session?.access_token
+        ) {
+          throw new Error(
+            "Your session has expired. Please sign in again."
+          );
+        }
+
+        const response =
+          await fetch(
+            "/api/vendor/create-profile",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type":
+                  "application/json",
+                Authorization: `Bearer ${session.access_token}`,
+              },
+              body: JSON.stringify({
+                businessName:
+                  businessName.trim(),
+                slug: uniqueSlug,
+                description:
+                  description.trim() || null,
+                categoryId:
+                  selectedCategory,
+                email:
+                  contactEmail.trim() ||
+                  null,
+                phone:
+                  contactPhone.trim() ||
+                  null,
+                whatsappNumber:
+                  whatsappNumber.trim() ||
+                  null,
+                website:
+                  website.trim() || null,
+                address:
+                  address.trim() || null,
+                city:
+                  city.trim() || null,
+                state:
+                  state.trim() || null,
+
+                /*
+                 * The API verifies this against the actual
+                 * authenticated Supabase user's phone.
+                 */
+                verifiedPhone:
+                  otpPhone.trim(),
+              }),
+            }
+          );
+
+        const result =
+          await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            result.error ||
+              "Failed to create vendor profile."
+          );
+        }
+
+        setCreatedSlug(
+          result.slug || uniqueSlug
+        );
+
+        setCurrentStep("complete");
+      } catch (err: unknown) {
+        console.error(
+          "Vendor onboarding completion error:",
+          err
+        );
+
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Failed to complete onboarding."
+        );
+      } finally {
+        setLoading(false);
+      }
+    };
 
   /*
    * ------------------------------------------------------------
    * Social sharing
    * ------------------------------------------------------------
    */
-  const handleShare = async (platform: string) => {
+  const handleShare = async (
+    platform: string
+  ) => {
     const finalSlug =
       createdSlug ||
-      `${slugify(businessName.trim()) || "business"}`;
+      `${slugify(
+        businessName.trim()
+      ) || "business"}`;
 
     const profileUrl =
       `https://dbmart.ng/vendors/${finalSlug}`;
@@ -616,7 +697,9 @@ export default function VendorOnboardingPage() {
   };
 
   const handleFinish = () => {
-    router.push("/dashboard/vendor");
+    router.push(
+      "/dashboard/vendor"
+    );
   };
 
   /*
@@ -637,18 +720,20 @@ export default function VendorOnboardingPage() {
   const renderProgressBar = () => (
     <div className="mb-10">
       <div className="flex items-center justify-between mb-2">
-        {stepLabels.map((label, i) => (
-          <div
-            key={label}
-            className={`text-xs font-medium transition-colors ${
-              i <= currentStepIndex
-                ? "text-brand-navy"
-                : "text-gray-300"
-            }`}
-          >
-            {label}
-          </div>
-        ))}
+        {stepLabels.map(
+          (label, i) => (
+            <div
+              key={label}
+              className={`text-xs font-medium transition-colors ${
+                i <= currentStepIndex
+                  ? "text-brand-navy"
+                  : "text-gray-300"
+              }`}
+            >
+              {label}
+            </div>
+          )
+        )}
       </div>
 
       <div className="relative h-2 bg-gray-100 rounded-full overflow-hidden">
@@ -682,11 +767,12 @@ export default function VendorOnboardingPage() {
     </button>
   );
 
-  const visibleCategories = categories.filter(
-    (category) =>
-      categoryType === "both" ||
-      category.type === categoryType
-  );
+  const visibleCategories =
+    categories.filter(
+      (category) =>
+        categoryType === "both" ||
+        category.type === categoryType
+    );
 
   return (
     <div className="min-h-screen bg-surface-secondary animate-fade-in">
@@ -711,7 +797,8 @@ export default function VendorOnboardingPage() {
       </header>
 
       <div className="mx-auto max-w-2xl px-4 sm:px-6 py-8">
-        {currentStep !== "complete" &&
+        {currentStep !==
+          "complete" &&
           renderProgressBar()}
 
         {error && (
@@ -724,7 +811,8 @@ export default function VendorOnboardingPage() {
         {/* STEP 1: BUSINESS */}
         {/* ================================================== */}
 
-        {currentStep === "business" && (
+        {currentStep ===
+          "business" && (
           <div className="animate-fade-in">
             <div className="text-center mb-8">
               <div className="w-16 h-16 rounded-2xl bg-brand-gold/10 flex items-center justify-center mx-auto mb-4">
@@ -750,7 +838,9 @@ export default function VendorOnboardingPage() {
                   type="text"
                   value={businessName}
                   onChange={(e) =>
-                    setBusinessName(e.target.value)
+                    setBusinessName(
+                      e.target.value
+                    )
                   }
                   placeholder="e.g. TechZone NG"
                   maxLength={150}
@@ -768,7 +858,9 @@ export default function VendorOnboardingPage() {
                 <textarea
                   value={description}
                   onChange={(e) =>
-                    setDescription(e.target.value)
+                    setDescription(
+                      e.target.value
+                    )
                   }
                   placeholder="Tell buyers what your business offers, what makes you unique, and why they should choose you..."
                   rows={4}
@@ -786,8 +878,12 @@ export default function VendorOnboardingPage() {
                   variant="gold"
                   size="lg"
                   className="w-full"
-                  disabled={!canProceedFromBusiness}
-                  onClick={handleSubmitBusiness}
+                  disabled={
+                    !canProceedFromBusiness
+                  }
+                  onClick={
+                    handleSubmitBusiness
+                  }
                 >
                   Continue
                   <ChevronRight className="h-5 w-5" />
@@ -801,9 +897,12 @@ export default function VendorOnboardingPage() {
         {/* STEP 2: CATEGORY */}
         {/* ================================================== */}
 
-        {currentStep === "category" && (
+        {currentStep ===
+          "category" && (
           <div className="animate-fade-in">
-            {renderBackButton("business")}
+            {renderBackButton(
+              "business"
+            )}
 
             <div className="text-center mb-8">
               <div className="w-16 h-16 rounded-2xl bg-brand-gold/10 flex items-center justify-center mx-auto mb-4">
@@ -821,38 +920,43 @@ export default function VendorOnboardingPage() {
 
             <div className="glass rounded-2xl p-6 sm:p-8 space-y-5">
               <div className="grid sm:grid-cols-3 gap-3 mb-6">
-                {categoryTypes.map((type) => (
-                  <button
-                    key={type.id}
-                    type="button"
-                    onClick={() => {
-                      setCategoryType(
-                        type.id as
-                          | "goods"
-                          | "service"
-                          | "both"
-                      );
-                      setSelectedCategory("");
-                    }}
-                    className={`p-4 rounded-xl border-2 text-left transition-all ${
-                      categoryType === type.id
-                        ? "border-brand-gold bg-brand-gold/5"
-                        : "border-gray-100 hover:border-gray-200"
-                    }`}
-                  >
-                    <div className="text-2xl mb-2">
-                      {type.icon}
-                    </div>
+                {categoryTypes.map(
+                  (type) => (
+                    <button
+                      key={type.id}
+                      type="button"
+                      onClick={() => {
+                        setCategoryType(
+                          type.id as
+                            | "goods"
+                            | "service"
+                            | "both"
+                        );
+                        setSelectedCategory(
+                          ""
+                        );
+                      }}
+                      className={`p-4 rounded-xl border-2 text-left transition-all ${
+                        categoryType ===
+                        type.id
+                          ? "border-brand-gold bg-brand-gold/5"
+                          : "border-gray-100 hover:border-gray-200"
+                      }`}
+                    >
+                      <div className="text-2xl mb-2">
+                        {type.icon}
+                      </div>
 
-                    <div className="font-semibold text-sm text-brand-navy">
-                      {type.label}
-                    </div>
+                      <div className="font-semibold text-sm text-brand-navy">
+                        {type.label}
+                      </div>
 
-                    <div className="text-xs text-gray-400 mt-1">
-                      {type.description}
-                    </div>
-                  </button>
-                ))}
+                      <div className="text-xs text-gray-400 mt-1">
+                        {type.description}
+                      </div>
+                    </button>
+                  )
+                )}
               </div>
 
               {categoryType && (
@@ -865,7 +969,8 @@ export default function VendorOnboardingPage() {
                     <div className="rounded-xl border border-gray-100 p-6 text-center text-sm text-gray-500">
                       Loading categories...
                     </div>
-                  ) : visibleCategories.length === 0 ? (
+                  ) : visibleCategories.length ===
+                    0 ? (
                     <div className="rounded-xl border border-accent-error/20 bg-accent-error/5 p-6 text-center text-sm text-accent-error">
                       No active categories are currently available.
                       Please try again later.
@@ -875,7 +980,9 @@ export default function VendorOnboardingPage() {
                       {visibleCategories.map(
                         (category) => (
                           <button
-                            key={category.id}
+                            key={
+                              category.id
+                            }
                             type="button"
                             onClick={() =>
                               setSelectedCategory(
@@ -917,7 +1024,9 @@ export default function VendorOnboardingPage() {
                     !selectedCategory ||
                     categoriesLoading
                   }
-                  onClick={handleSubmitCategory}
+                  onClick={
+                    handleSubmitCategory
+                  }
                 >
                   Continue
                   <ChevronRight className="h-5 w-5" />
@@ -931,9 +1040,12 @@ export default function VendorOnboardingPage() {
         {/* STEP 3: CONTACT */}
         {/* ================================================== */}
 
-        {currentStep === "contact" && (
+        {currentStep ===
+          "contact" && (
           <div className="animate-fade-in">
-            {renderBackButton("category")}
+            {renderBackButton(
+              "category"
+            )}
 
             <div className="text-center mb-8">
               <div className="w-16 h-16 rounded-2xl bg-brand-gold/10 flex items-center justify-center mx-auto mb-4">
@@ -960,7 +1072,9 @@ export default function VendorOnboardingPage() {
                     type="email"
                     value={contactEmail}
                     onChange={(e) =>
-                      setContactEmail(e.target.value)
+                      setContactEmail(
+                        e.target.value
+                      )
                     }
                     placeholder="business@example.com"
                     className="w-full h-11 px-4 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-gold focus:border-transparent"
@@ -976,7 +1090,9 @@ export default function VendorOnboardingPage() {
                     type="tel"
                     value={contactPhone}
                     onChange={(e) =>
-                      setContactPhone(e.target.value)
+                      setContactPhone(
+                        e.target.value
+                      )
                     }
                     placeholder="080 1234 5678"
                     className="w-full h-11 px-4 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-gold focus:border-transparent"
@@ -996,7 +1112,9 @@ export default function VendorOnboardingPage() {
                     type="tel"
                     value={whatsappNumber}
                     onChange={(e) =>
-                      setWhatsappNumber(e.target.value)
+                      setWhatsappNumber(
+                        e.target.value
+                      )
                     }
                     placeholder="+234 801 234 5678"
                     className="w-full h-11 pl-10 pr-4 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-gold focus:border-transparent"
@@ -1020,7 +1138,9 @@ export default function VendorOnboardingPage() {
                     type="url"
                     value={website}
                     onChange={(e) =>
-                      setWebsite(e.target.value)
+                      setWebsite(
+                        e.target.value
+                      )
                     }
                     placeholder="https://yourwebsite.com"
                     className="w-full h-11 pl-10 pr-4 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-gold focus:border-transparent"
@@ -1041,7 +1161,9 @@ export default function VendorOnboardingPage() {
                       type="text"
                       value={address}
                       onChange={(e) =>
-                        setAddress(e.target.value)
+                        setAddress(
+                          e.target.value
+                        )
                       }
                       placeholder="Street address"
                       className="w-full h-11 pl-10 pr-4 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-gold focus:border-transparent"
@@ -1058,7 +1180,9 @@ export default function VendorOnboardingPage() {
                     type="text"
                     value={city}
                     onChange={(e) =>
-                      setCity(e.target.value)
+                      setCity(
+                        e.target.value
+                      )
                     }
                     placeholder="e.g. Lagos"
                     className="w-full h-11 px-4 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-gold focus:border-transparent"
@@ -1075,7 +1199,9 @@ export default function VendorOnboardingPage() {
                   type="text"
                   value={state}
                   onChange={(e) =>
-                    setState(e.target.value)
+                    setState(
+                      e.target.value
+                    )
                   }
                   placeholder="e.g. Lagos"
                   className="w-full h-11 px-4 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-gold focus:border-transparent"
@@ -1087,7 +1213,9 @@ export default function VendorOnboardingPage() {
                   variant="gold"
                   size="lg"
                   className="w-full"
-                  onClick={handleSubmitContact}
+                  onClick={
+                    handleSubmitContact
+                  }
                 >
                   Continue
                   <ChevronRight className="h-5 w-5" />
@@ -1101,9 +1229,12 @@ export default function VendorOnboardingPage() {
         {/* STEP 4: VERIFY */}
         {/* ================================================== */}
 
-        {currentStep === "verify" && (
+        {currentStep ===
+          "verify" && (
           <div className="animate-fade-in">
-            {renderBackButton("contact")}
+            {renderBackButton(
+              "contact"
+            )}
 
             <div className="text-center mb-8">
               <div className="w-16 h-16 rounded-2xl bg-brand-gold/10 flex items-center justify-center mx-auto mb-4">
@@ -1148,7 +1279,9 @@ export default function VendorOnboardingPage() {
                       variant="primary"
                       size="lg"
                       className="w-full"
-                      onClick={handleSendOTP}
+                      onClick={
+                        handleSendOTP
+                      }
                       loading={loading}
                     >
                       Send Verification Code
@@ -1188,10 +1321,13 @@ export default function VendorOnboardingPage() {
                         variant="primary"
                         size="lg"
                         className="w-full"
-                        onClick={handleVerifyOTP}
+                        onClick={
+                          handleVerifyOTP
+                        }
                         loading={loading}
                         disabled={
-                          otpCode.length !== 6
+                          otpCode.length !==
+                          6
                         }
                       >
                         Verify Phone
@@ -1199,7 +1335,9 @@ export default function VendorOnboardingPage() {
 
                       <button
                         type="button"
-                        onClick={handleSendOTP}
+                        onClick={
+                          handleSendOTP
+                        }
                         disabled={loading}
                         className="w-full text-center text-sm text-brand-navy font-semibold hover:text-brand-gold disabled:opacity-50"
                       >
@@ -1226,7 +1364,9 @@ export default function VendorOnboardingPage() {
                     variant="gold"
                     size="lg"
                     onClick={() =>
-                      setCurrentStep("share")
+                      setCurrentStep(
+                        "share"
+                      )
                     }
                   >
                     Continue
@@ -1242,9 +1382,12 @@ export default function VendorOnboardingPage() {
         {/* STEP 5: SHARE */}
         {/* ================================================== */}
 
-        {currentStep === "share" && (
+        {currentStep ===
+          "share" && (
           <div className="animate-fade-in">
-            {renderBackButton("verify")}
+            {renderBackButton(
+              "verify"
+            )}
 
             <div className="text-center mb-8">
               <div className="w-16 h-16 rounded-2xl bg-brand-gold/10 flex items-center justify-center mx-auto mb-4">
@@ -1285,7 +1428,9 @@ export default function VendorOnboardingPage() {
                 <button
                   type="button"
                   onClick={() =>
-                    handleShare("whatsapp")
+                    handleShare(
+                      "whatsapp"
+                    )
                   }
                   className="flex items-center gap-3 p-4 rounded-xl border-2 border-[#25D366]/20 bg-[#25D366]/5 hover:border-[#25D366] hover:bg-[#25D366]/10 transition-all"
                 >
@@ -1327,7 +1472,9 @@ export default function VendorOnboardingPage() {
                 <button
                   type="button"
                   onClick={() =>
-                    handleShare("tiktok")
+                    handleShare(
+                      "tiktok"
+                    )
                   }
                   className="flex items-center gap-3 p-4 rounded-xl border-2 border-gray-100 hover:border-gray-200 transition-all"
                 >
@@ -1349,7 +1496,9 @@ export default function VendorOnboardingPage() {
                 <button
                   type="button"
                   onClick={() =>
-                    handleShare("snapchat")
+                    handleShare(
+                      "snapchat"
+                    )
                   }
                   className="flex items-center gap-3 p-4 rounded-xl border-2 border-gray-100 hover:border-gray-200 transition-all"
                 >
@@ -1412,7 +1561,8 @@ export default function VendorOnboardingPage() {
         {/* STEP 6: COMPLETE */}
         {/* ================================================== */}
 
-        {currentStep === "complete" && (
+        {currentStep ===
+          "complete" && (
           <div className="animate-scale-in text-center py-12">
             <div className="w-24 h-24 rounded-full bg-accent-success/10 flex items-center justify-center mx-auto mb-6">
               <CheckCircle2 className="h-12 w-12 text-accent-success" />
