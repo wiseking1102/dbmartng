@@ -4,6 +4,18 @@ import { sendEmail, emailTemplates } from "@/lib/email";
 import { verifyWebhookSignature } from "@/lib/paystack";
 
 /**
+ * Server-authoritative Pro price in NGN.
+ *
+ * charge.success events carry the amount in kobo; this is compared
+ * against the expected server-side amount so a manipulated or
+ * mismatched transaction can never activate Pro.
+ * (Keep in sync with PRO_PRICE_NGN in /api/paystack/subscription
+ *  and PRO_PRICE in /api/payments/manual.)
+ */
+const PRO_PRICE_NGN = 5000;
+const PRO_AMOUNT_KOBO = PRO_PRICE_NGN * 100;
+
+/**
  * Check if a webhook event has already been processed (idempotency).
  */
 async function isEventProcessed(eventId: string): Promise<boolean> {
@@ -41,6 +53,29 @@ async function handleChargeSuccess(data: any) {
 
   if (!userId) {
     console.warn("Webhook charge.success: no userId in metadata", reference);
+    return;
+  }
+
+  /*
+   * Verify the amount against the server-authoritative Pro price.
+   * A mismatched transaction (wrong amount, currency manipulation,
+   * or an unrelated payment replaying our metadata) must never
+   * activate Pro. The event is still marked processed so Paystack
+   * does not retry it indefinitely.
+   */
+  if (
+    typeof data.amount !== "number" ||
+    data.amount < PRO_AMOUNT_KOBO ||
+    (data.currency && data.currency !== "NGN")
+  ) {
+    console.warn(
+      `Webhook charge.success: amount/currency mismatch for ${reference} — got ${data.amount} ${data.currency || ""}, expected >= ${PRO_AMOUNT_KOBO} NGN. Not activating.`
+    );
+    await adminClient.from("system_alerts").insert({
+      source: "paystack_webhook",
+      error_detail: `charge.success amount/currency mismatch: reference ${reference}, amount ${data.amount}, currency ${data.currency || "unknown"} — Pro NOT activated.`,
+      severity: "warning",
+    } as never);
     return;
   }
 
@@ -112,6 +147,86 @@ async function handleChargeSuccess(data: any) {
 
     console.log(
       `Subscription activated for user ${userId}: ${subscriptionCode}`
+    );
+  } else {
+    /*
+     * One-time transaction without a Paystack plan: this is the
+     * one-time ₦5,000 Pro payment architecture. A transaction
+     * initialized by /api/paystack/subscription always carries
+     * metadata.userId + metadata.type === "subscription".
+     */
+    if (metadata.type !== "subscription") {
+      console.log(
+        `Webhook charge.success: non-subscription one-time payment ignored (${reference})`
+      );
+      return;
+    }
+
+    const customerCode = data.customer?.customer_code;
+
+    const { data: existingSub } = await adminClient
+      .from("subscriptions")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("tier", "pro")
+      .maybeSingle();
+
+    const subscriptionData = {
+      vendor_id: vendorId,
+      user_id: userId,
+      paystack_customer_code: customerCode,
+      paystack_subscription_code: null,
+      paystack_plan_code: null,
+      tier: "pro" as const,
+      status: "active" as const,
+      price_paid: amount,
+      currency: "NGN",
+      current_period_start: new Date().toISOString(),
+      current_period_end: new Date(
+        Date.now() + 30 * 24 * 60 * 60 * 1000
+      ).toISOString(),
+    };
+
+    if (existingSub) {
+      await adminClient
+        .from("subscriptions")
+        .update(subscriptionData as never)
+        .eq("id", (existingSub as unknown as { id: string }).id);
+    } else {
+      await adminClient.from("subscriptions").insert(subscriptionData as never);
+    }
+
+    await adminClient
+      .from("vendor_profiles")
+      .update({
+        subscription_status: "pro",
+        trial_decision_made: true,
+        trial_decision: "pro",
+      } as never)
+      .eq("user_id", userId);
+
+    const { data: vendorInfo } = await (adminClient
+      .from("vendor_profiles")
+      .select("business_name, email")
+      .eq("user_id", userId)
+      .single() as never) as unknown as { data: { business_name: string; email: string | null } | null };
+
+    const vendorEmail = vendorInfo?.email || customerEmail;
+    if (vendorEmail && vendorInfo?.business_name) {
+      const receipt = emailTemplates.subscriptionReceipt(
+        vendorInfo.business_name,
+        amount,
+        subscriptionData.current_period_end
+      );
+      sendEmail({
+        to: vendorEmail,
+        subject: receipt.subject,
+        html: receipt.html,
+      });
+    }
+
+    console.log(
+      `One-time Pro payment activated for user ${userId} (reference ${reference})`
     );
   }
 }

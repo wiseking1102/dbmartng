@@ -55,6 +55,13 @@ export const PERMISSION_CATEGORIES: PermissionCategory[] = [
     ],
   },
   {
+    category: "Payments",
+    permissions: [
+      { key: "payments.view", label: "View Payments", description: "See manual payment requests and subscription status" },
+      { key: "payments.review", label: "Review Payments", description: "Approve or reject manual payment requests (activates Pro)" },
+    ],
+  },
+  {
     category: "Jobs",
     permissions: [
       { key: "jobs.view", label: "View Jobs", description: "See job applications" },

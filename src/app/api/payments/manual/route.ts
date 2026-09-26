@@ -14,6 +14,10 @@ type AuthUser = {
   email?: string | null;
 };
 
+type UserProfile = {
+  role: string | null;
+};
+
 type VendorProfile = {
   id: string;
   user_id: string;
@@ -22,6 +26,7 @@ type VendorProfile = {
 type ExistingPaymentRequest = {
   id: string;
   status: "pending" | "approved" | "rejected";
+  payment_reference: string | null;
 };
 
 type CreatedPaymentRequest = {
@@ -82,6 +87,198 @@ async function getAuthenticatedUser(
   }
 }
 
+/**
+ * Explicitly verify the authenticated user's role is "vendor".
+ * A vendor_profiles row alone is not proof of the vendor role:
+ * the authoritative role lives in public.users.role.
+ */
+async function requireVendorRole(
+  adminClient: ReturnType<typeof getDb>,
+  userId: string
+): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+  const {
+    data: userData,
+    error: userError,
+  } = await adminClient
+    .from("users")
+    .select("role")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (userError) {
+    console.error(
+      "User role lookup error:",
+      userError
+    );
+
+    return {
+      ok: false,
+      status: 500,
+      error: "Unable to verify your account.",
+    };
+  }
+
+  const profile = userData as UserProfile | null;
+
+  if (!profile || profile.role !== "vendor") {
+    return {
+      ok: false,
+      status: 403,
+      error:
+        "Only vendor accounts can request manual payment.",
+    };
+  }
+
+  return { ok: true };
+}
+
+function paymentConfigResponse(extra: Record<string, unknown> = {}) {
+  return {
+    amount: PRO_PRICE,
+    currency: "NGN",
+    bank_name: MANUAL_PAYMENT.bank_name,
+    account_number: MANUAL_PAYMENT.account_number,
+    account_name: MANUAL_PAYMENT.account_name,
+    payment_method: "manual_opay",
+    ...extra,
+  };
+}
+
+/**
+ * GET /api/payments/manual
+ *
+ * Returns the authoritative payment details (amount, bank account)
+ * for the authenticated vendor, plus their current request state.
+ *
+ * The manual payment page calls this instead of trusting URL
+ * parameters — the browser must never be the source of truth
+ * for the amount or receiving account.
+ */
+export async function GET(request: Request) {
+  try {
+    const user = await getAuthenticatedUser(request);
+
+    if (!user) {
+      return NextResponse.json(
+        {
+          error: "Authentication required",
+        },
+        { status: 401 }
+      );
+    }
+
+    const adminClient = getDb();
+
+    const roleCheck = await requireVendorRole(
+      adminClient,
+      user.id
+    );
+
+    if (!roleCheck.ok) {
+      return NextResponse.json(
+        { error: roleCheck.error },
+        { status: roleCheck.status }
+      );
+    }
+
+    const {
+      data: vendorData,
+      error: vendorError,
+    } = await adminClient
+      .from("vendor_profiles")
+      .select("id, user_id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (vendorError) {
+      console.error(
+        "Vendor lookup error:",
+        vendorError
+      );
+
+      return NextResponse.json(
+        {
+          error: "Unable to load vendor profile",
+        },
+        { status: 500 }
+      );
+    }
+
+    if (!vendorData) {
+      return NextResponse.json(
+        {
+          error: "Vendor profile not found",
+        },
+        { status: 404 }
+      );
+    }
+
+    /*
+     * Surface the vendor's most recent request so the UI can
+     * show "already submitted" instead of allowing duplicates.
+     */
+    const {
+      data: existingData,
+      error: existingError,
+    } = await adminClient
+      .from("manual_payment_requests")
+      .select("id, status, payment_reference")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (existingError) {
+      console.error(
+        "Existing payment request lookup error:",
+        existingError
+      );
+      // Non-fatal: fall through with no existing request
+    }
+
+    const existing =
+      (existingData as unknown as ExistingPaymentRequest | null) ||
+      null;
+
+    return NextResponse.json({
+      success: true,
+      ...paymentConfigResponse({
+        existing: existing?.status === "pending",
+        request_id: existing?.id || null,
+        request_status: existing?.status || null,
+        message:
+          existing?.status === "pending"
+            ? "You already have a payment request awaiting review."
+            : undefined,
+      }),
+    });
+  } catch (error) {
+    console.error(
+      "Manual payment GET error:",
+      error
+    );
+
+    return NextResponse.json(
+      {
+        error: "Internal server error",
+      },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * POST /api/payments/manual
+ *
+ * Creates a manual payment request for the authenticated vendor.
+ *
+ * Security:
+ * - user_id/vendor_id/amount/account are generated server-side.
+ * - users.role must be "vendor" (explicit check, not inferred).
+ * - Duplicate pending requests are blocked in the API and,
+ *   via the unique partial index, at the database level.
+ * - payment_reference is stored for admin verification.
+ */
 export async function POST(request: Request) {
   try {
     const user = await getAuthenticatedUser(request);
@@ -96,6 +293,18 @@ export async function POST(request: Request) {
     }
 
     const adminClient = getDb();
+
+    const roleCheck = await requireVendorRole(
+      adminClient,
+      user.id
+    );
+
+    if (!roleCheck.ok) {
+      return NextResponse.json(
+        { error: roleCheck.error },
+        { status: roleCheck.status }
+      );
+    }
 
     const {
       data: vendorData,
@@ -173,6 +382,17 @@ export async function POST(request: Request) {
     }
 
     /*
+     * Collect the transfer reference the vendor typed on the
+     * payment page. Optional historically, but strongly
+     * encouraged — it is what the admin uses to verify.
+     */
+    const paymentReference =
+      typeof body.payment_reference === "string" &&
+      body.payment_reference.trim()
+        ? body.payment_reference.trim().slice(0, 255)
+        : null;
+
+    /*
      * Prevent duplicate pending manual payment requests
      * for the same authenticated vendor.
      */
@@ -210,17 +430,10 @@ export async function POST(request: Request) {
         existing: true,
         request_id: existing.id,
         status: existing.status,
-        payment_method: "manual_opay",
-        bank_name:
-          MANUAL_PAYMENT.bank_name,
-        account_number:
-          MANUAL_PAYMENT.account_number,
-        account_name:
-          MANUAL_PAYMENT.account_name,
-        amount: PRO_PRICE,
-        currency: "NGN",
-        message:
-          "You already have a payment request awaiting review.",
+        ...paymentConfigResponse({
+          message:
+            "You already have a payment request awaiting review.",
+        }),
       });
     }
 
@@ -245,6 +458,7 @@ export async function POST(request: Request) {
           MANUAL_PAYMENT.account_number,
         account_name:
           MANUAL_PAYMENT.account_name,
+        payment_reference: paymentReference,
         status: "pending",
       })
       .select(
@@ -257,6 +471,25 @@ export async function POST(request: Request) {
         "Manual payment request creation failed:",
         paymentRequestError
       );
+
+      /*
+       * 23505 = unique_violation. With the new partial unique
+       * index, this is the race where another concurrent
+       * submission already created the pending request.
+       */
+      if (
+        (paymentRequestError as { code?: string })
+          .code === "23505"
+      ) {
+        return NextResponse.json({
+          success: true,
+          existing: true,
+          ...paymentConfigResponse({
+            message:
+              "You already have a payment request awaiting review.",
+          }),
+        });
+      }
 
       return NextResponse.json(
         {
@@ -277,17 +510,10 @@ export async function POST(request: Request) {
       status: paymentRequest.status,
       submitted_at:
         paymentRequest.submitted_at,
-      payment_method: "manual_opay",
-      bank_name:
-        MANUAL_PAYMENT.bank_name,
-      account_number:
-        MANUAL_PAYMENT.account_number,
-      account_name:
-        MANUAL_PAYMENT.account_name,
-      amount: PRO_PRICE,
-      currency: "NGN",
-      message:
-        "Payment request submitted for admin review.",
+      ...paymentConfigResponse({
+        message:
+          "Payment request submitted for admin review.",
+      }),
     });
   } catch (error) {
     console.error(

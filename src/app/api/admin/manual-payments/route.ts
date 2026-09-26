@@ -43,6 +43,15 @@ type ManualPaymentRequest = {
 
 type PaymentAction = "approve" | "reject";
 
+type ApprovalRpcResult = {
+  success: boolean;
+  error?: string;
+  status?: string;
+  action?: string;
+  message?: string;
+  period_end?: string;
+};
+
 /**
  * The generated Supabase Database type can lag behind
  * migrations already applied to the project.
@@ -346,7 +355,23 @@ export async function GET(request: Request) {
 /**
  * PATCH
  *
- * Approve or reject a manual payment request.
+ * Approve or reject a manual payment request by calling the
+ * authoritative database function `approve_manual_payment()`.
+ *
+ * The database function performs, in ONE atomic transaction:
+ *   lock payment row
+ *   verify still pending
+ *   verify reviewer is admin OR sub_admin with payments.review
+ *   activate subscription
+ *   update vendor profile
+ *   mark payment approved/rejected
+ *   audit log
+ *   vendor notification
+ *
+ * The API never performs the multi-step
+ * UPDATE payment → UPDATE subscription → UPDATE vendor
+ * sequence itself, because a failure between those operations
+ * can leave inconsistent payment state.
  *
  * Body:
  * {
@@ -360,7 +385,7 @@ export async function GET(request: Request) {
  * - user_id/vendor_id come from the database request.
  * - Client cannot choose which vendor gets activated.
  * - Rejection never activates a subscription.
- * - Pro activation only occurs after explicit admin approval.
+ * - Pro activation only occurs after explicit review approval.
  */
 export async function PATCH(request: Request) {
   try {
@@ -432,6 +457,11 @@ export async function PATCH(request: Request) {
 
     const supabase = getDb();
 
+    /*
+     * Light pre-check so obviously-invalid requests fail
+     * with a clear message. The authoritative state and
+     * permission checks happen inside the RPC.
+     */
     const {
       data: paymentData,
       error: paymentError,
@@ -475,306 +505,70 @@ export async function PATCH(request: Request) {
       );
     }
 
+    /*
+     * Safe cast through unknown:
+     * the generated types can lag behind migrations and
+     * otherwise reduce the row to `never`, which caused
+     * the previous build error
+     * ("Property 'status' does not exist on type 'never'").
+     */
     const payment =
-      paymentData as ManualPaymentRequest;
+      paymentData as unknown as ManualPaymentRequest;
 
-    if (payment.status !== "pending") {
-      return NextResponse.json(
+    const { data: rpcData, error: rpcError } =
+      await supabase.rpc(
+        "approve_manual_payment",
         {
-          error:
-            `This payment request has already been ${payment.status}.`,
-          status: payment.status,
-        },
-        { status: 409 }
+          p_request_id: payment.id,
+          p_reviewer_id: admin.id,
+          p_admin_note: adminNote || null,
+          p_action: action,
+        }
       );
-    }
 
-    const now = new Date().toISOString();
-
-    /**
-     * REJECT
-     *
-     * No subscription changes are made.
-     */
-    if (action === "reject") {
-      const {
-        data: rejectedRequest,
-        error: rejectionError,
-      } = await supabase
-        .from("manual_payment_requests")
-        .update({
-          status: "rejected",
-          reviewed_at: now,
-          reviewed_by: admin.id,
-          admin_note: adminNote || null,
-          updated_at: now,
-        })
-        .eq("id", payment.id)
-        .eq("status", "pending")
-        .select()
-        .maybeSingle();
-
-      if (rejectionError) {
-        console.error(
-          "Payment rejection error:",
-          rejectionError
-        );
-
-        return NextResponse.json(
-          {
-            error:
-              "Failed to reject payment request",
-          },
-          { status: 500 }
-        );
-      }
-
-      if (!rejectedRequest) {
-        return NextResponse.json(
-          {
-            error:
-              "Payment request was already processed.",
-          },
-          { status: 409 }
-        );
-      }
-
-      return NextResponse.json({
-        success: true,
-        action: "rejected",
-        message:
-          "Manual payment request rejected.",
-      });
-    }
-
-    /**
-     * APPROVE
-     *
-     * Conditional pending -> approved transition.
-     * This prevents the same request from being approved
-     * twice through normal concurrent admin actions.
-     */
-    const {
-      data: approvedRequest,
-      error: approvalError,
-    } = await supabase
-      .from("manual_payment_requests")
-      .update({
-        status: "approved",
-        reviewed_at: now,
-        reviewed_by: admin.id,
-        admin_note: adminNote || null,
-        updated_at: now,
-      })
-      .eq("id", payment.id)
-      .eq("status", "pending")
-      .select()
-      .maybeSingle();
-
-    if (approvalError) {
+    if (rpcError) {
       console.error(
-        "Payment approval error:",
-        approvalError
+        "approve_manual_payment RPC error:",
+        rpcError
       );
 
       return NextResponse.json(
         {
           error:
-            "Failed to approve payment request",
+            "Failed to process the payment request. Please try again.",
         },
         { status: 500 }
       );
     }
 
-    if (!approvedRequest) {
-      return NextResponse.json(
-        {
-          error:
-            "Payment request was already processed.",
-        },
-        { status: 409 }
-      );
-    }
+    const result =
+      (rpcData as unknown as ApprovalRpcResult) ||
+      null;
 
-    /**
-     * The IDs below are taken directly from the
-     * server-side payment record.
-     */
-    const userId = payment.user_id;
-    const vendorId = payment.vendor_id;
-
-    const activationStart = new Date();
-    const activationEnd = new Date(
-      activationStart
-    );
-
-    activationEnd.setDate(
-      activationEnd.getDate() + 30
-    );
-
-    /**
-     * Find the user's existing Pro subscription.
-     */
-    const {
-      data: existingSubscriptionData,
-      error: subscriptionLookupError,
-    } = await supabase
-      .from("subscriptions")
-      .select(
-        `
-          id,
-          user_id,
-          vendor_id,
-          tier,
-          status
-        `
-      )
-      .eq("user_id", userId)
-      .eq("tier", "pro")
-      .maybeSingle();
-
-    if (subscriptionLookupError) {
-      console.error(
-        "Subscription lookup after approval failed:",
-        subscriptionLookupError
-      );
+    if (!result?.success) {
+      const alreadyProcessed =
+        typeof result?.status === "string" &&
+        result.status !== "pending";
 
       return NextResponse.json(
         {
           error:
-            "Payment was approved, but Pro activation could not be completed. Please retry the activation from the admin panel.",
-          paymentApproved: true,
-          activated: false,
+            result?.error ||
+            "Failed to process the payment request.",
+          status: result?.status,
         },
-        { status: 500 }
+        { status: alreadyProcessed ? 409 : 400 }
       );
-    }
-
-    const existingSubscription =
-      existingSubscriptionData as
-        | {
-            id: string;
-            user_id: string;
-            vendor_id: string;
-            tier: string;
-            status: string;
-          }
-        | null;
-
-    /**
-     * Manual payments have no Paystack identifiers.
-     */
-    const subscriptionData = {
-      vendor_id: vendorId,
-      user_id: userId,
-
-      paystack_customer_code: null,
-      paystack_subscription_code: null,
-      paystack_plan_code: null,
-
-      tier: "pro",
-      status: "active",
-
-      price_paid: Number(payment.amount),
-      currency:
-        payment.currency || "NGN",
-
-      current_period_start:
-        activationStart.toISOString(),
-
-      current_period_end:
-        activationEnd.toISOString(),
-
-      updated_at:
-        activationStart.toISOString(),
-    };
-
-    let subscriptionError: unknown = null;
-
-    if (existingSubscription?.id) {
-      const {
-        error,
-      } = await supabase
-        .from("subscriptions")
-        .update(subscriptionData)
-        .eq(
-          "id",
-          existingSubscription.id
-        );
-
-      subscriptionError = error;
-    } else {
-      const {
-        error,
-      } = await supabase
-        .from("subscriptions")
-        .insert(subscriptionData);
-
-      subscriptionError = error;
-    }
-
-    if (subscriptionError) {
-      console.error(
-        "Pro subscription activation error:",
-        subscriptionError
-      );
-
-      return NextResponse.json(
-        {
-          error:
-            "Payment was approved, but Pro activation failed. Please retry activation.",
-          paymentApproved: true,
-          activated: false,
-        },
-        { status: 500 }
-      );
-    }
-
-    /**
-     * Keep vendor_profiles.subscription_status
-     * synchronized with the activated subscription.
-     */
-    const {
-      error: vendorUpdateError,
-    } = await supabase
-      .from("vendor_profiles")
-      .update({
-        subscription_status: "active",
-        updated_at:
-          activationStart.toISOString(),
-      })
-      .eq("id", vendorId);
-
-    if (vendorUpdateError) {
-      console.error(
-        "Vendor subscription status update error:",
-        vendorUpdateError
-      );
-
-      /**
-       * The actual Pro subscription was successfully
-       * activated, so do not tell the admin that payment
-       * activation failed.
-       */
-      return NextResponse.json({
-        success: true,
-        action: "approved",
-        paymentApproved: true,
-        activated: true,
-        profileUpdated: false,
-        warning:
-          "Pro was activated, but the vendor profile status could not be updated.",
-      });
     }
 
     return NextResponse.json({
       success: true,
-      action: "approved",
-      paymentApproved: true,
-      activated: true,
-      profileUpdated: true,
-      message:
-        "Manual payment approved and Pro subscription activated.",
+      action: result.action,
+      paymentApproved: result.action === "approved",
+      activated: result.action === "approved",
+      profileUpdated: result.action === "approved",
+      message: result.message,
+      period_end: result.period_end || null,
     });
   } catch (error) {
     console.error(

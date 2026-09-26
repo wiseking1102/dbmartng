@@ -12,6 +12,49 @@ export async function GET(request: Request) {
 
     const adminClient = createAdminClient();
 
+    /*
+     * Expiry sweep: any active Pro subscription whose period has
+     * ended must lose Pro privileges even if Paystack reconciliation
+     * never runs (e.g. manual/OPay approvals have no Paystack code).
+     */
+    const nowIso = new Date().toISOString();
+
+    const { data: expiredRaw, error: expiredError } = await adminClient
+      .from("subscriptions")
+      .select("id, user_id, vendor_id, current_period_end")
+      .eq("status", "active")
+      .eq("tier", "pro")
+      .lt("current_period_end", nowIso);
+
+    const expiredSubs =
+      (expiredRaw as unknown as
+        | { id: string; user_id: string; vendor_id: string; current_period_end: string }[]
+        | null) || null;
+
+    if (expiredError) {
+      console.error("Expired subscription fetch error:", expiredError);
+    } else if (expiredSubs && expiredSubs.length > 0) {
+      for (const sub of expiredSubs) {
+        await adminClient
+          .from("subscriptions")
+          .update({ status: "expired" } as never)
+          .eq("id", sub.id);
+
+        await adminClient
+          .from("vendor_profiles")
+          .update({ subscription_status: "free" } as never)
+          .eq("user_id", sub.user_id);
+
+        await adminClient.from("system_alerts").insert({
+          source: "subscription_expiry_cron",
+          error_detail: `Pro subscription expired for vendor ${sub.vendor_id} (user ${sub.user_id}) — period ended ${sub.current_period_end}`,
+          severity: "info",
+        } as never);
+      }
+
+      console.log(`Expired ${expiredSubs.length} Pro subscription(s).`);
+    }
+
     interface SubItem {
       id: string;
       user_id: string;

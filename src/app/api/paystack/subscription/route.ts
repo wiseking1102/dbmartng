@@ -16,6 +16,17 @@ const MANUAL_PAYMENT = {
 
 const PRO_PRICE_NGN = 5000;
 
+/**
+ * Server-side plan registry.
+ *
+ * The browser may reference a plan by name, but the plan code
+ * actually sent to Paystack is resolved HERE, never from the
+ * request payload. An unknown name rejects the request.
+ */
+const PAYSTACK_PLANS: Record<string, string> = {
+  pro_monthly: process.env.PAYSTACK_PLAN_CODE_PRO_MONTHLY || "",
+};
+
 type AuthenticatedUser = {
   id: string;
   email?: string | null;
@@ -119,20 +130,16 @@ async function getAuthenticatedUser(
   }
 }
 
-function manualPaymentResponse(
-  userId: string,
-  vendorId: string,
-  reason?: string
-) {
-  const params = new URLSearchParams({
-    vendor_id: vendorId,
-    user_id: userId,
-    amount: String(PRO_PRICE_NGN),
-    currency: "NGN",
-    bank_name: MANUAL_PAYMENT.bank_name,
-    account_number: MANUAL_PAYMENT.account_number,
-    account_name: MANUAL_PAYMENT.account_name,
-  });
+/**
+ * Manual OPay fallback response.
+ *
+ * SECURITY: the URL intentionally carries NO user/vendor
+ * identity, amount, or account details. The payment page
+ * resolves everything server-side from the authenticated
+ * session — the URL only hints that manual payment is needed.
+ */
+function manualPaymentResponse(reason?: string) {
+  const params = new URLSearchParams();
 
   if (reason) {
     params.set("reason", reason);
@@ -146,7 +153,7 @@ function manualPaymentResponse(
       message:
         "Online payment is currently unavailable. You can complete payment manually.",
       data: {
-        payment_url: `/payment/manual?${params.toString()}`,
+        payment_url: `/payment/manual${reason ? `?reason=${encodeURIComponent(reason)}` : ""}`,
         bank_name: MANUAL_PAYMENT.bank_name,
         account_number:
           MANUAL_PAYMENT.account_number,
@@ -158,20 +165,6 @@ function manualPaymentResponse(
     },
     { status: 200 }
   );
-}
-
-function getPlanCode(value: unknown): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-
-  const trimmed = value.trim();
-
-  if (!trimmed) {
-    return null;
-  }
-
-  return trimmed;
 }
 
 // ─────────────────────────────────────────────
@@ -195,9 +188,29 @@ export async function POST(request: Request) {
       body = {};
     }
 
-    const planCode = getPlanCode(
-      body.planCode
-    );
+    /*
+     * SECURITY: never trust a plan code from the browser.
+     * The client may only reference a plan by NAME; the
+     * actual Paystack plan code is resolved server-side.
+     */
+    const requestedPlan =
+      typeof body.plan === "string" && body.plan.trim()
+        ? body.plan.trim()
+        : typeof body.planCode === "string" && body.planCode.trim()
+          ? body.planCode.trim()
+          : "pro_monthly";
+
+    const resolvedPlanCode =
+      PAYSTACK_PLANS[requestedPlan] || null;
+
+    if (requestedPlan && !resolvedPlanCode && requestedPlan !== "pro_monthly") {
+      return NextResponse.json(
+        {
+          error: "Unknown subscription plan.",
+        },
+        { status: 400 }
+      );
+    }
 
     const authenticatedUser =
       await getAuthenticatedUser(request);
@@ -294,8 +307,6 @@ export async function POST(request: Request) {
 
       if (!secretKey?.trim()) {
         return manualPaymentResponse(
-          userId,
-          vendorProfile.id,
           "Paystack key is unavailable"
         );
       }
@@ -306,8 +317,6 @@ export async function POST(request: Request) {
       );
 
       return manualPaymentResponse(
-        userId,
-        vendorProfile.id,
         "Paystack configuration unavailable"
       );
     }
@@ -363,8 +372,6 @@ export async function POST(request: Request) {
       );
 
       return manualPaymentResponse(
-        userId,
-        vendorProfile.id,
         "Paystack customer lookup failed"
       );
     }
@@ -412,8 +419,6 @@ export async function POST(request: Request) {
           );
 
           return manualPaymentResponse(
-            userId,
-            vendorProfile.id,
             "Paystack customer creation failed"
           );
         }
@@ -427,8 +432,6 @@ export async function POST(request: Request) {
         );
 
         return manualPaymentResponse(
-          userId,
-          vendorProfile.id,
           "Paystack customer creation failed"
         );
       }
@@ -459,9 +462,16 @@ export async function POST(request: Request) {
               email,
               amount: amountKobo,
 
-              ...(planCode
+              /*
+               * Only attach a plan when the server resolved a
+               * trusted plan code. If PAYSTACK_PLAN_CODE_PRO_MONTHLY
+               * is not configured, this stays a one-time ₦5,000
+               * transaction renewed manually — the billing model
+               * is then consistently one-time (see read.txt #D).
+               */
+              ...(resolvedPlanCode
                 ? {
-                    plan: planCode,
+                    plan: resolvedPlanCode,
                   }
                 : {}),
 
@@ -476,7 +486,7 @@ export async function POST(request: Request) {
                 vendorId:
                   vendorProfile.id,
                 type: "subscription",
-                planCode,
+                plan: requestedPlan,
                 amountNgn,
               },
             }),
@@ -503,8 +513,6 @@ export async function POST(request: Request) {
         );
 
         return manualPaymentResponse(
-          userId,
-          vendorProfile.id,
           transactionData.message ||
             "Paystack payment initialization failed"
         );
@@ -516,8 +524,6 @@ export async function POST(request: Request) {
       );
 
       return manualPaymentResponse(
-        userId,
-        vendorProfile.id,
         "Unable to connect to Paystack"
       );
     }
@@ -545,7 +551,7 @@ export async function POST(request: Request) {
             paystack_subscription_code:
               null,
             paystack_plan_code:
-              planCode,
+              resolvedPlanCode,
             tier: "pro",
             status: "pending",
             price_paid: amountNgn,
@@ -869,6 +875,7 @@ export async function PUT(request: Request) {
     /*
      * Only verified Paystack subscription state
      * changes the vendor subscription status.
+     * Canonical profile values: pro | trial | free | payment_failed.
      */
     const profileStatus =
       newStatus === "active"

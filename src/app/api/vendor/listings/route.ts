@@ -137,6 +137,59 @@ async function getVendorProfile(
   return data as VendorProfile | null;
 }
 
+/**
+ * Server-side Pro entitlement check.
+ *
+ * Verifies the authoritative subscription state rather than
+ * trusting vendor_profiles.subscription_status alone, which can
+ * be stale or contradictory:
+ *   subscription.tier = 'pro'
+ *   subscription.status = 'active'
+ *   subscription.current_period_end > now
+ */
+async function isVendorPro(
+  userId: string
+): Promise<boolean> {
+  try {
+    const {
+      data,
+      error,
+    } = await getDb()
+      .from("subscriptions")
+      .select("id, status, current_period_end")
+      .eq("user_id", userId)
+      .eq("tier", "pro")
+      .maybeSingle();
+
+    if (error || !data) {
+      return false;
+    }
+
+    const subscription = data as {
+      status: string;
+      current_period_end: string | null;
+    };
+
+    if (subscription.status !== "active") {
+      return false;
+    }
+
+    return (
+      !!subscription.current_period_end &&
+      new Date(
+        subscription.current_period_end
+      ).getTime() > Date.now()
+    );
+  } catch (error) {
+    console.error(
+      "Pro entitlement check failed:",
+      error
+    );
+
+    return false;
+  }
+}
+
 async function verifyListingOwnership(
   listingId: string,
   vendorId: string
@@ -405,6 +458,63 @@ export async function POST(
         },
         { status: 404 }
       );
+    }
+
+    /*
+     * Server-side Pro entitlement check:
+     * never trust vendor_profiles.subscription_status alone.
+     */
+    const isPro = await isVendorPro(
+      authenticatedUser.id
+    );
+
+    /*
+     * Free-tier listing limit, enforced server-side.
+     * Free vendors are limited to FREE_TIER_LISTING_LIMIT
+     * listings; Pro vendors are unlimited. Expired Pro
+     * naturally falls back to the free limit.
+     */
+    if (!isPro) {
+      const FREE_TIER_LISTING_LIMIT = 5;
+
+      const {
+        count: listingCount,
+        error: countError,
+      } = await getDb()
+        .from("listings")
+        .select("id", {
+          count: "exact",
+          head: true,
+        })
+        .eq("vendor_id", vendorProfile.id);
+
+      if (countError) {
+        console.error(
+          "Listing count lookup error:",
+          countError
+        );
+
+        return NextResponse.json(
+          {
+            error:
+              "Failed to verify your listing limit.",
+          },
+          { status: 500 }
+        );
+      }
+
+      if (
+        (listingCount || 0) >=
+        FREE_TIER_LISTING_LIMIT
+      ) {
+        return NextResponse.json(
+          {
+            error: `Free plan is limited to ${FREE_TIER_LISTING_LIMIT} listings. Upgrade to Pro for unlimited listings.`,
+            upgradeRequired: true,
+          },
+          { status: 403 }
+        );
+      }
     }
 
     const moderationResult =
