@@ -1,26 +1,18 @@
 import { createClient } from "@supabase/supabase-js";
-import type { Database } from "@/types/database";
 
-/**
- * Supabase admin client using the service role key.
- * This bypasses RLS and should ONLY be used in:
- * - Server-side API routes
- * - Cron jobs / scheduled tasks
- * - Admin-level operations (webhook handling, migrations, seeding)
- *
- * Never expose this client to the browser or client components.
- */
 export function createAdminClient() {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-  if (!supabaseUrl || !serviceRoleKey) {
-    throw new Error(
-      "Missing Supabase admin credentials. Ensure NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are set."
-    );
+  if (!supabaseUrl) {
+    throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL");
   }
 
-  return createClient<Database>(supabaseUrl, serviceRoleKey, {
+  if (!serviceRoleKey) {
+    throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY");
+  }
+
+  return createClient(supabaseUrl, serviceRoleKey, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
