@@ -1,6 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 
-export type AdminUser = {
+type AdminUser = {
   id: string;
   email: string | null;
   full_name: string | null;
@@ -18,28 +18,31 @@ export async function authenticateAdmin(
       return null;
     }
 
-    const token = authorization
-      .slice("Bearer ".length)
-      .trim();
+    const token = authorization.slice("Bearer ".length).trim();
 
     if (!token) {
       return null;
     }
 
-    const supabase = createAdminClient();
+    const supabase = createAdminClient() as any;
 
     const {
-      data: { user },
+      data: authData,
       error: authError,
     } = await supabase.auth.getUser(token);
+
+    const user = authData?.user;
 
     if (authError || !user) {
       return null;
     }
 
-    const { data: profileData, error: profileError } = await supabase
+    const {
+      data: profileData,
+      error: profileError,
+    } = await supabase
       .from("users")
-      .select("id, email, full_name, role")
+      .select("role, full_name")
       .eq("id", user.id)
       .maybeSingle();
 
@@ -47,14 +50,14 @@ export async function authenticateAdmin(
       return null;
     }
 
-    const role = profileData.role;
+    const role = profileData.role as string | null;
 
     if (role !== "admin" && role !== "sub_admin") {
       return null;
     }
 
     if (requiredPermission && role !== "admin") {
-      const { data: permitted, error: permissionError } = await supabase
+      const { data: permitted } = await supabase
         .from("sub_admin_permissions")
         .select(
           "id, granted, sub_admins!inner(user_id, status)"
@@ -65,7 +68,10 @@ export async function authenticateAdmin(
         .eq("sub_admins.status", "active")
         .limit(1);
 
-      if (permissionError || !permitted || permitted.length === 0) {
+      const rows =
+        (permitted as unknown as { id: string }[] | null) || [];
+
+      if (rows.length === 0) {
         return null;
       }
     }
@@ -73,8 +79,8 @@ export async function authenticateAdmin(
     return {
       id: user.id,
       email: user.email ?? null,
-      full_name: user.full_name ?? null,
-      role,
+      full_name: profileData.full_name ?? null,
+      role: role as "admin" | "sub_admin",
     };
   } catch (error) {
     console.error("Admin authentication error:", error);
