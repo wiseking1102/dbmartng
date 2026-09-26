@@ -3,12 +3,12 @@ import { createAdminClient } from "@/lib/supabase/admin";
 export type AuthUser = {
   id: string;
   email: string | null;
+  phone: string | null;
 };
 
 /**
  * Resolve the authenticated user from a bearer token.
- * Shared by messaging/upload/contact endpoints so identity
- * always comes from the session, never the request body.
+ * Identity always comes from the Supabase session.
  */
 export async function getBearerUser(
   request: Request
@@ -37,6 +37,7 @@ export async function getBearerUser(
     return {
       id: data.user.id,
       email: data.user.email ?? null,
+      phone: data.user.phone ?? null,
     };
   } catch (error) {
     console.error("Bearer authentication error:", error);
