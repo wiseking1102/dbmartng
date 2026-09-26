@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { supabase } from "@/lib/supabase/client";
+import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -19,6 +19,9 @@ import {
   Clock,
   User,
 } from "lucide-react";
+
+// Shared browser Supabase client for session tokens
+const supabase = createClient();
 
 interface Conversation {
   id: string;
