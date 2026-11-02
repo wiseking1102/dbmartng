@@ -358,20 +358,6 @@ export async function GET(request: Request) {
  * Approve or reject a manual payment request by calling the
  * authoritative database function `approve_manual_payment()`.
  *
- * The database function performs, in ONE atomic transaction:
- *   lock payment row
- *   verify still pending
- *   verify reviewer is admin OR sub_admin with payments.review     * activate subscription,
-     *     update vendor profile,
-     *     mark payment approved/rejected
-     *     audit log
-     *     vendor notification
- *
- * The API never performs the multi-step
- * UPDATE payment → UPDATE subscription → UPDATE vendor
- * sequence itself, because a failure between those operations
- * can leave inconsistent payment state.
- *
  * Body:
  * {
  *   requestId: string,
@@ -422,8 +408,7 @@ export async function PATCH(request: Request) {
         : "";
 
     const action: PaymentAction | null =
-      body.action === "approve" ||
-      body.action === "reject"
+      body.action === "approve" || body.action === "reject"
         ? body.action
         : null;
 
@@ -437,8 +422,7 @@ export async function PATCH(request: Request) {
     if (!requestId) {
       return NextResponse.json(
         {
-          error:
-            "Payment request ID is required",
+          error: "Payment request ID is required",
         },
         { status: 400 }
       );
@@ -447,8 +431,7 @@ export async function PATCH(request: Request) {
     if (!action) {
       return NextResponse.json(
         {
-          error:
-            "Action must be either approve or reject",
+          error: "Action must be either approve or reject",
         },
         { status: 400 }
       );
@@ -488,8 +471,7 @@ export async function PATCH(request: Request) {
 
       return NextResponse.json(
         {
-          error:
-            "Failed to load the payment request",
+          error: "Failed to load the payment request",
         },
         { status: 500 }
       );
@@ -506,19 +488,15 @@ export async function PATCH(request: Request) {
 
     /*
      * Safe cast through unknown:
-     * the generated types can lag behind migrations and
-     * otherwise reduce the row to `never`, which caused
-     * the previous build error
-     * ("Property 'status' does not exist on type 'never'").
+     * the generated types can lag behind migrations.
      */
     const payment =
-      paymentData as unknown as ManualPaymentRequest;    /*
+      paymentData as unknown as ManualPaymentRequest;
+
+    /*
      * REJECT — handled here with a single atomic, guarded statement.
      *
-     * The live approve_manual_payment() function is an approval-only
-     * function; rejection never must touch the subscription, so the
-     * guarded UPDATE below (status pending → rejected) is the
-     * authoritative state transition. No activation can occur.
+     * Rejection never touches the subscription.
      */
     if (action === "reject") {
       const { data: rejectedData, error: rejectError } =
@@ -551,10 +529,6 @@ export async function PATCH(request: Request) {
         );
       }
 
-      /*
-       * Null result = the row was not pending anymore (concurrent
-       * action) — surface the conflict instead of double-processing.
-       */
       const rejectedRow =
         (rejectedData as unknown as
           | { id: string; user_id: string }
@@ -572,8 +546,7 @@ export async function PATCH(request: Request) {
       }
 
       /*
-       * Audit log + vendor notification (best effort; must never
-       * break an already-final rejection).
+       * Audit log + vendor notification (best effort).
        */
       try {
         await supabase.from("admin_audit_log").insert({
@@ -588,7 +561,10 @@ export async function PATCH(request: Request) {
           } as never,
         } as never);
       } catch (auditError) {
-        console.error("Rejection audit log failed:", auditError);
+        console.error(
+          "Rejection audit log failed:",
+          auditError
+        );
       }
 
       try {
@@ -596,7 +572,8 @@ export async function PATCH(request: Request) {
           user_id: rejectedRow.user_id,
           type: "payment_rejected",
           title: "Payment request rejected",
-          body: "Your manual payment request could not be verified. Please contact support or resubmit with a valid payment reference.",
+          body:
+            "Your manual payment request could not be verified. Please contact support or resubmit with a valid payment reference.",
         } as never);
       } catch (notifyError) {
         console.error(
@@ -617,10 +594,7 @@ export async function PATCH(request: Request) {
     }
 
     /*
-     * APPROVE — single authoritative database transaction via the
-     * live approve_manual_payment(p_request_id, p_admin_id,     * p_admin_note) function: lock payment row, verify pending status,
-     *     permission-check the reviewer, activate subscription,
-     * update vendor profile, mark payment approved, audit + notify.
+     * APPROVE — single authoritative database transaction via RPC.
      */
     const { data: rpcData, error: rpcError } =
       await supabase.rpc("approve_manual_payment", {
@@ -665,10 +639,7 @@ export async function PATCH(request: Request) {
 
     /*
      * Post-verification: the subscription must be active for the
-     * vendor the payment belongs to. Database functions can lag
-     * behind migrations; if activation did not fully land, repair it
-     * here (service-role) rather than reporting a success that the
-     * vendor would not see. Guards make each statement idempotent.
+     * vendor the payment belongs to.
      */
     try {
       await supabase
@@ -676,99 +647,117 @@ export async function PATCH(request: Request) {
         .select("id, status")
         .eq("id", payment.id)
         .maybeSingle()
-        .then(async ({ data: approvedRow }) => {
-          const approved = (
-            approvedRow as unknown as { id: string; status: string } | null
-          )?.status;
+        .then(
+          async ({
+            data: approvedRow,
+          }: {
+            data: unknown;
+          }) => {
+            const approved = (
+              approvedRow as unknown as {
+                id: string;
+                status: string;
+              } | null
+            )?.status;
 
-          if (approved !== "approved") return;
+            if (approved !== "approved") return;
 
-          const { data: subRow } = await supabase
-            .from("subscriptions")
-            .select("id, status, current_period_end")
-            .eq("user_id", payment.user_id)
-            .eq("tier", "pro")
-            .maybeSingle();
-
-          const sub = (
-            subRow as unknown as
-              | {
-                  id: string;
-                  status: string;
-                  current_period_end: string | null;
-                }
-              | null
-          ) || null;
-
-          const alreadyActive =
-            sub?.status === "active" &&
-            sub?.current_period_end &&
-            new Date(sub.current_period_end).getTime() > Date.now();
-
-          if (alreadyActive) return;
-
-          const periodStart = new Date();
-          const periodEnd = new Date(
-            Date.now() + 30 * 24 * 60 * 60 * 1000
-          );
-
-          if (sub) {
-            await supabase
+            const { data: subRow } = await supabase
               .from("subscriptions")
-              .update({
+              .select("id, status, current_period_end")
+              .eq("user_id", payment.user_id)
+              .eq("tier", "pro")
+              .maybeSingle();
+
+            const sub = (
+              subRow as unknown as
+                | {
+                    id: string;
+                    status: string;
+                    current_period_end: string | null;
+                  }
+                | null
+            ) || null;
+
+            const alreadyActive =
+              sub?.status === "active" &&
+              sub?.current_period_end &&
+              new Date(sub.current_period_end).getTime() >
+                Date.now();
+
+            if (alreadyActive) return;
+
+            const periodStart = new Date();
+            const periodEnd = new Date(
+              Date.now() + 30 * 24 * 60 * 60 * 1000
+            );
+
+            if (sub) {
+              await supabase
+                .from("subscriptions")
+                .update({
+                  tier: "pro",
+                  status: "active",
+                  price_paid: payment.amount,
+                  currency: payment.currency || "NGN",
+                  current_period_start:
+                    periodStart.toISOString(),
+                  current_period_end:
+                    periodEnd.toISOString(),
+                  cancelled_at: null,
+                  updated_at: periodStart.toISOString(),
+                  vendor_id: payment.vendor_id,
+                  user_id: payment.user_id,
+                } as never)
+                .eq("id", sub.id);
+            } else {
+              await supabase.from("subscriptions").insert({
+                vendor_id: payment.vendor_id,
+                user_id: payment.user_id,
+                paystack_customer_code: null,
+                paystack_subscription_code: null,
+                paystack_plan_code: null,
                 tier: "pro",
                 status: "active",
                 price_paid: payment.amount,
                 currency: payment.currency || "NGN",
-                current_period_start: periodStart.toISOString(),
-                current_period_end: periodEnd.toISOString(),
-                cancelled_at: null,
+                current_period_start:
+                  periodStart.toISOString(),
+                current_period_end:
+                  periodEnd.toISOString(),
+              } as never);
+            }
+
+            await supabase
+              .from("vendor_profiles")
+              .update({
+                subscription_status: "pro",
                 updated_at: periodStart.toISOString(),
-                vendor_id: payment.vendor_id,
-                user_id: payment.user_id,
               } as never)
-              .eq("id", sub.id);
-          } else {
-            await supabase.from("subscriptions").insert({
-              vendor_id: payment.vendor_id,
-              user_id: payment.user_id,
-              paystack_customer_code: null,
-              paystack_subscription_code: null,
-              paystack_plan_code: null,
-              tier: "pro",
-              status: "active",
-              price_paid: payment.amount,
-              currency: payment.currency || "NGN",
-              current_period_start: periodStart.toISOString(),
-              current_period_end: periodEnd.toISOString(),
-            } as never);
-          }
+              .eq("id", payment.vendor_id);
 
-          await supabase
-            .from("vendor_profiles")
-            .update({
-              subscription_status: "pro",
-              updated_at: periodStart.toISOString(),
-            } as never)
-            .eq("id", payment.vendor_id);
-
-          try {
-            await supabase.from("notifications").insert({
-              user_id: payment.user_id,
-              type: "payment_approved",
-              title: "Pro subscription activated",
-              body: "Your Pro subscription is now active for 30 days.",
-            } as never);
-          } catch {
-            /* non-fatal */
+            try {
+              await supabase.from("notifications").insert({
+                user_id: payment.user_id,
+                type: "payment_approved",
+                title: "Pro subscription activated",
+                body:
+                  "Your Pro subscription is now active for 30 days.",
+              } as never);
+            } catch {
+              /* non-fatal */
+            }
           }
-        });
+        );
     } catch (verifyError) {
       console.error(
         "Post-activation verification error:",
         verifyError
       );
-      /* Verification is best-effort; the RPC result still stands. */
+
+      /*
+       * Verification is best-effort; the RPC result still stands.
+       */
     }
 
     return NextResponse.json({
@@ -777,9 +766,10 @@ export async function PATCH(request: Request) {
       paymentApproved: true,
       activated: true,
       profileUpdated: true,
-      message: result.message || "Manual payment approved and Pro subscription activated.",
-      period_end:
-        result.period_end || null,
+      message:
+        result.message ||
+        "Manual payment approved and Pro subscription activated.",
+      period_end: result.period_end || null,
     });
   } catch (error) {
     console.error(
