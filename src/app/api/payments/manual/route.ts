@@ -32,7 +32,7 @@ type ExistingPaymentRequest = {
 type CreatedPaymentRequest = {
   id: string;
   status: "pending" | "approved" | "rejected";
-  submitted_at: string;
+  created_at: string;
 };
 
 /**
@@ -462,7 +462,7 @@ export async function POST(request: Request) {
         status: "pending",
       })
       .select(
-        "id, status, submitted_at"
+        "id, status, created_at"
       )
       .single();
 
@@ -503,13 +503,22 @@ export async function POST(request: Request) {
     const paymentRequest =
       paymentRequestData as CreatedPaymentRequest;
 
+    if (!paymentRequest) {
+      return NextResponse.json(
+        {
+          error: "Failed to submit your payment request.",
+        },
+        { status: 500 }
+      );
+    }
+
     return NextResponse.json({
       success: true,
       existing: false,
       request_id: paymentRequest.id,
       status: paymentRequest.status,
       submitted_at:
-        paymentRequest.submitted_at,
+        paymentRequest.created_at,
       ...paymentConfigResponse({
         message:
           "Payment request submitted for admin review.",

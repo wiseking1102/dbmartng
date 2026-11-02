@@ -79,156 +79,124 @@ async function handleChargeSuccess(data: any) {
     return;
   }
 
-  const plan = data.plan;
-  if (plan) {
-    const customerCode = data.customer?.customer_code;
-    const subscriptionCode = data.subscription?.subscription_code;
+  /*
+   * Only subscription payments activate Pro — both plan-based and
+   * one-time ₦5,000 flows carry type "subscription" in metadata.
+   * Ad/banner payments (type "ad") are handled by their own flow.
+   */
+  const isSubscriptionPayment =
+    data.plan || metadata.type === "subscription";
 
-    const { data: existingSub } = await adminClient
-      .from("subscriptions")
-      .select("id")
-      .eq("user_id", userId)
-      .eq("tier", "pro")
-      .maybeSingle();
-
-    const subscriptionData = {
-      vendor_id: vendorId,
-      user_id: userId,
-      paystack_customer_code: customerCode,
-      paystack_subscription_code: subscriptionCode,
-      paystack_plan_code: plan.plan_code,
-      tier: "pro" as const,
-      status: "active" as const,
-      price_paid: amount,
-      currency: "NGN",
-      current_period_start: new Date().toISOString(),
-      current_period_end: new Date(
-        Date.now() + 30 * 24 * 60 * 60 * 1000
-      ).toISOString(),
-    };
-
-    if (existingSub) {
-      await adminClient
-        .from("subscriptions")
-        .update(subscriptionData as never)
-        .eq("id", (existingSub as unknown as { id: string }).id);
-    } else {
-      await adminClient.from("subscriptions").insert(subscriptionData as never);
-    }
-
-    await adminClient
-      .from("vendor_profiles")
-      .update({
-        subscription_status: "pro",
-        trial_decision_made: true,
-        trial_decision: "pro",
-      } as never)
-      .eq("user_id", userId);
-
-    const { data: vendorInfo } = await (adminClient
-      .from("vendor_profiles")
-      .select("business_name, email")
-      .eq("user_id", userId)
-      .single() as never) as unknown as { data: { business_name: string; email: string | null } | null };
-
-    const vendorEmail = vendorInfo?.email || customerEmail;
-    if (vendorEmail && vendorInfo?.business_name) {
-      const receipt = emailTemplates.subscriptionReceipt(
-        vendorInfo.business_name,
-        amount,
-        subscriptionData.current_period_end
-      );
-      sendEmail({
-        to: vendorEmail,
-        subject: receipt.subject,
-        html: receipt.html,
-      });
-    }
-
+  if (!isSubscriptionPayment) {
     console.log(
-      `Subscription activated for user ${userId}: ${subscriptionCode}`
+      `Webhook charge.success: non-subscription payment ignored (${reference})`
     );
-  } else {
-    /*
-     * One-time transaction without a Paystack plan: this is the
-     * one-time ₦5,000 Pro payment architecture. A transaction
-     * initialized by /api/paystack/subscription always carries
-     * metadata.userId + metadata.type === "subscription".
-     */
-    if (metadata.type !== "subscription") {
-      console.log(
-        `Webhook charge.success: non-subscription one-time payment ignored (${reference})`
-      );
-      return;
-    }
-
-    const customerCode = data.customer?.customer_code;
-
-    const { data: existingSub } = await adminClient
-      .from("subscriptions")
-      .select("id")
-      .eq("user_id", userId)
-      .eq("tier", "pro")
-      .maybeSingle();
-
-    const subscriptionData = {
-      vendor_id: vendorId,
-      user_id: userId,
-      paystack_customer_code: customerCode,
-      paystack_subscription_code: null,
-      paystack_plan_code: null,
-      tier: "pro" as const,
-      status: "active" as const,
-      price_paid: amount,
-      currency: "NGN",
-      current_period_start: new Date().toISOString(),
-      current_period_end: new Date(
-        Date.now() + 30 * 24 * 60 * 60 * 1000
-      ).toISOString(),
-    };
-
-    if (existingSub) {
-      await adminClient
-        .from("subscriptions")
-        .update(subscriptionData as never)
-        .eq("id", (existingSub as unknown as { id: string }).id);
-    } else {
-      await adminClient.from("subscriptions").insert(subscriptionData as never);
-    }
-
-    await adminClient
-      .from("vendor_profiles")
-      .update({
-        subscription_status: "pro",
-        trial_decision_made: true,
-        trial_decision: "pro",
-      } as never)
-      .eq("user_id", userId);
-
-    const { data: vendorInfo } = await (adminClient
-      .from("vendor_profiles")
-      .select("business_name, email")
-      .eq("user_id", userId)
-      .single() as never) as unknown as { data: { business_name: string; email: string | null } | null };
-
-    const vendorEmail = vendorInfo?.email || customerEmail;
-    if (vendorEmail && vendorInfo?.business_name) {
-      const receipt = emailTemplates.subscriptionReceipt(
-        vendorInfo.business_name,
-        amount,
-        subscriptionData.current_period_end
-      );
-      sendEmail({
-        to: vendorEmail,
-        subject: receipt.subject,
-        html: receipt.html,
-      });
-    }
-
-    console.log(
-      `One-time Pro payment activated for user ${userId} (reference ${reference})`
-    );
+    return;
   }
+
+  /*
+   * Resolve the vendor profile id: recent transaction
+   * initialization always includes vendorId in metadata, but
+   * older payloads may not — resolve it from the database.
+   */
+  let resolvedVendorId: string | null = vendorId ?? null;
+
+  if (!resolvedVendorId) {
+    const { data: vendorRow } = await adminClient
+      .from("vendor_profiles")
+      .select("id")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    resolvedVendorId =
+      (vendorRow as unknown as { id: string } | null)?.id ?? null;
+  }
+
+  if (!resolvedVendorId) {
+    console.warn(
+      `Webhook charge.success: no vendor profile for user ${userId} (${reference})`
+    );
+
+    await adminClient.from("system_alerts").insert({
+      source: "paystack_webhook",
+      error_detail: `charge.success could not resolve vendor profile: reference ${reference}, user ${userId} — Pro NOT activated.`,
+      severity: "warning",
+    } as never);
+
+    return;
+  }
+
+  /*
+   * Trusted activation — all subscription state changes go through
+   * the atomic activate_verified_paystack_payment() function:
+   * reference-verified Pro activation with idempotency guarantees.
+   * This handler never performs its own multi-step writes.
+   */
+  const { data: activationData, error: activationError } =
+    await adminClient.rpc(
+      "activate_verified_paystack_payment",
+      {
+        p_user_id: userId,
+        p_vendor_id: resolvedVendorId,
+        p_reference: String(reference),
+        p_amount: amount,
+        p_currency: "NGN",
+        p_customer_code: data.customer?.customer_code ?? null,
+        p_plan_code: data.plan?.plan_code ?? null,
+        p_subscription_code:
+          data.subscription?.subscription_code ?? null,
+      }
+    );
+
+  if (activationError) {
+    console.error(
+      "Pro activation failed — Paystack will retry this event:",
+      reference,
+      activationError
+    );
+
+    throw activationError;
+  }
+
+  const activation =
+    (activationData as unknown as
+      | { success?: boolean; error?: string; period_end?: string }
+      | null) || null;
+
+  const periodEnd =
+    activation?.period_end ||
+    new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+  const { data: vendorInfo } = await adminClient
+    .from("vendor_profiles")
+    .select("business_name, email")
+    .eq("id", resolvedVendorId)
+    .maybeSingle();
+
+  const vendorProfile =
+    (vendorInfo as unknown as
+      | { business_name: string; email: string | null }
+      | null) || null;
+
+  const vendorEmail = vendorProfile?.email || customerEmail;
+
+  if (vendorEmail && vendorProfile?.business_name) {
+    const receipt = emailTemplates.subscriptionReceipt(
+      vendorProfile.business_name,
+      amount,
+      periodEnd
+    );
+
+    sendEmail({
+      to: vendorEmail,
+      subject: receipt.subject,
+      html: receipt.html,
+    });
+  }
+
+  console.log(
+    `Pro payment verified and activated for user ${userId} (reference ${reference})`
+  );
 }
 
 /**

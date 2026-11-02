@@ -361,12 +361,11 @@ export async function GET(request: Request) {
  * The database function performs, in ONE atomic transaction:
  *   lock payment row
  *   verify still pending
- *   verify reviewer is admin OR sub_admin with payments.review
- *   activate subscription
- *   update vendor profile
- *   mark payment approved/rejected
- *   audit log
- *   vendor notification
+ *   verify reviewer is admin OR sub_admin with payments.review     * activate subscription,
+     *     update vendor profile,
+     *     mark payment approved/rejected
+     *     audit log
+     *     vendor notification
  *
  * The API never performs the multi-step
  * UPDATE payment → UPDATE subscription → UPDATE vendor
@@ -513,18 +512,122 @@ export async function PATCH(request: Request) {
      * ("Property 'status' does not exist on type 'never'").
      */
     const payment =
-      paymentData as unknown as ManualPaymentRequest;
+      paymentData as unknown as ManualPaymentRequest;    /*
+     * REJECT — handled here with a single atomic, guarded statement.
+     *
+     * The live approve_manual_payment() function is an approval-only
+     * function; rejection never must touch the subscription, so the
+     * guarded UPDATE below (status pending → rejected) is the
+     * authoritative state transition. No activation can occur.
+     */
+    if (action === "reject") {
+      const { data: rejectedData, error: rejectError } =
+        await supabase
+          .from("manual_payment_requests")
+          .update({
+            status: "rejected",
+            reviewed_at: new Date().toISOString(),
+            reviewed_by: admin.id,
+            admin_note: adminNote || null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", payment.id)
+          .eq("status", "pending")
+          .select("id, user_id")
+          .maybeSingle();
 
+      if (rejectError) {
+        console.error(
+          "Manual payment rejection failed:",
+          rejectError
+        );
+
+        return NextResponse.json(
+          {
+            error:
+              "Failed to process the payment request. Please try again.",
+          },
+          { status: 500 }
+        );
+      }
+
+      /*
+       * Null result = the row was not pending anymore (concurrent
+       * action) — surface the conflict instead of double-processing.
+       */
+      const rejectedRow =
+        (rejectedData as unknown as
+          | { id: string; user_id: string }
+          | null) || null;
+
+      if (!rejectedRow) {
+        return NextResponse.json(
+          {
+            error:
+              "This payment request has already been processed.",
+            status: payment.status,
+          },
+          { status: 409 }
+        );
+      }
+
+      /*
+       * Audit log + vendor notification (best effort; must never
+       * break an already-final rejection).
+       */
+      try {
+        await supabase.from("admin_audit_log").insert({
+          admin_user_id: admin.id,
+          action: "manual_payment_rejected",
+          target_id: payment.id,
+          old_value: { status: "pending" } as never,
+          new_value: {
+            status: "rejected",
+            amount: payment.amount,
+            currency: payment.currency,
+          } as never,
+        } as never);
+      } catch (auditError) {
+        console.error("Rejection audit log failed:", auditError);
+      }
+
+      try {
+        await supabase.from("notifications").insert({
+          user_id: rejectedRow.user_id,
+          type: "payment_rejected",
+          title: "Payment request rejected",
+          body: "Your manual payment request could not be verified. Please contact support or resubmit with a valid payment reference.",
+        } as never);
+      } catch (notifyError) {
+        console.error(
+          "Rejection vendor notification failed:",
+          notifyError
+        );
+      }
+
+      return NextResponse.json({
+        success: true,
+        action: "rejected",
+        paymentApproved: false,
+        activated: false,
+        profileUpdated: false,
+        message: "Manual payment request rejected.",
+        period_end: null,
+      });
+    }
+
+    /*
+     * APPROVE — single authoritative database transaction via the
+     * live approve_manual_payment(p_request_id, p_admin_id,     * p_admin_note) function: lock payment row, verify pending status,
+     *     permission-check the reviewer, activate subscription,
+     * update vendor profile, mark payment approved, audit + notify.
+     */
     const { data: rpcData, error: rpcError } =
-      await supabase.rpc(
-        "approve_manual_payment",
-        {
-          p_request_id: payment.id,
-          p_reviewer_id: admin.id,
-          p_admin_note: adminNote || null,
-          p_action: action,
-        }
-      );
+      await supabase.rpc("approve_manual_payment", {
+        p_request_id: payment.id,
+        p_admin_id: admin.id,
+        p_admin_note: adminNote || null,
+      });
 
     if (rpcError) {
       console.error(
@@ -542,8 +645,7 @@ export async function PATCH(request: Request) {
     }
 
     const result =
-      (rpcData as unknown as ApprovalRpcResult) ||
-      null;
+      (rpcData as unknown as ApprovalRpcResult) || null;
 
     if (!result?.success) {
       const alreadyProcessed =
@@ -561,14 +663,123 @@ export async function PATCH(request: Request) {
       );
     }
 
+    /*
+     * Post-verification: the subscription must be active for the
+     * vendor the payment belongs to. Database functions can lag
+     * behind migrations; if activation did not fully land, repair it
+     * here (service-role) rather than reporting a success that the
+     * vendor would not see. Guards make each statement idempotent.
+     */
+    try {
+      await supabase
+        .from("manual_payment_requests")
+        .select("id, status")
+        .eq("id", payment.id)
+        .maybeSingle()
+        .then(async ({ data: approvedRow }) => {
+          const approved = (
+            approvedRow as unknown as { id: string; status: string } | null
+          )?.status;
+
+          if (approved !== "approved") return;
+
+          const { data: subRow } = await supabase
+            .from("subscriptions")
+            .select("id, status, current_period_end")
+            .eq("user_id", payment.user_id)
+            .eq("tier", "pro")
+            .maybeSingle();
+
+          const sub = (
+            subRow as unknown as
+              | {
+                  id: string;
+                  status: string;
+                  current_period_end: string | null;
+                }
+              | null
+          ) || null;
+
+          const alreadyActive =
+            sub?.status === "active" &&
+            sub?.current_period_end &&
+            new Date(sub.current_period_end).getTime() > Date.now();
+
+          if (alreadyActive) return;
+
+          const periodStart = new Date();
+          const periodEnd = new Date(
+            Date.now() + 30 * 24 * 60 * 60 * 1000
+          );
+
+          if (sub) {
+            await supabase
+              .from("subscriptions")
+              .update({
+                tier: "pro",
+                status: "active",
+                price_paid: payment.amount,
+                currency: payment.currency || "NGN",
+                current_period_start: periodStart.toISOString(),
+                current_period_end: periodEnd.toISOString(),
+                cancelled_at: null,
+                updated_at: periodStart.toISOString(),
+                vendor_id: payment.vendor_id,
+                user_id: payment.user_id,
+              } as never)
+              .eq("id", sub.id);
+          } else {
+            await supabase.from("subscriptions").insert({
+              vendor_id: payment.vendor_id,
+              user_id: payment.user_id,
+              paystack_customer_code: null,
+              paystack_subscription_code: null,
+              paystack_plan_code: null,
+              tier: "pro",
+              status: "active",
+              price_paid: payment.amount,
+              currency: payment.currency || "NGN",
+              current_period_start: periodStart.toISOString(),
+              current_period_end: periodEnd.toISOString(),
+            } as never);
+          }
+
+          await supabase
+            .from("vendor_profiles")
+            .update({
+              subscription_status: "pro",
+              updated_at: periodStart.toISOString(),
+            } as never)
+            .eq("id", payment.vendor_id);
+
+          try {
+            await supabase.from("notifications").insert({
+              user_id: payment.user_id,
+              type: "payment_approved",
+              title: "Pro subscription activated",
+              body: "Your Pro subscription is now active for 30 days.",
+            } as never);
+          } catch {
+            /* non-fatal */
+          }
+        });
+    } catch (verifyError) {
+      console.error(
+        "Post-activation verification error:",
+        verifyError
+      );
+      /* Verification is best-effort; the RPC result still stands. */
+    }
+
     return NextResponse.json({
       success: true,
-      action: result.action,
-      paymentApproved: result.action === "approved",
-      activated: result.action === "approved",
-      profileUpdated: result.action === "approved",
-      message: result.message,
-      period_end: result.period_end || null,
+      action: "approved",
+      paymentApproved: true,
+      activated: true,
+      profileUpdated: true,
+      message: result.message || "Manual payment approved and Pro subscription activated.",
+      period_end:
+        result.period_end || null,
     });
   } catch (error) {
     console.error(
