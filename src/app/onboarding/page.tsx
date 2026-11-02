@@ -129,12 +129,126 @@ export default function VendorOnboardingPage() {
    * ------------------------------------------------------------
    * Authentication guard
    * ------------------------------------------------------------
+   *
+   * Rules:
+   * - Never navigate while the session/role is being resolved.
+   * - A signed-out visitor goes to the vendor auth screen.
+   * - A signed-in non-vendor goes to their own dashboard.
+   * - A signed-in user whose role is still unknown keeps a loading
+   *   state (with one final server-backed lookup) instead of being
+   *   bounced to /auth — the old behavior flickered the page and
+   *   yanked vendors away mid-registration.
+   */
+  const [roleFallbackPending, setRoleFallbackPending] =
+    useState(false);
+
+  useEffect(() => {
+    if (authLoading) return;
+
+    if (!user) {
+      router.replace("/auth?type=vendor");
+      return;
+    }
+
+    if (role === "buyer") {
+      router.replace("/dashboard/buyer");
+      return;
+    }
+
+    if (role === "admin" || role === "sub_admin") {
+      router.replace("/dashboard/admin");
+      return;
+    }
+
+    /*
+     * role is "vendor" or still(null) — stay on the page.
+     */
+  }, [user, role, authLoading, router]);
+
+  /*
+   * ------------------------------------------------------------
+   * Final fallback role lookup
+   * ------------------------------------------------------------
+   *
+   * If useAuth's retries have all failed, verify the role once more
+   * here (short delay to let any in-flight profile creation finish)
+   * and only then decide between continuing onboarding and /account.
    */
   useEffect(() => {
-    if (!authLoading && (!user || role !== "vendor")) {
-      router.push("/auth?type=vendor");
-    }
-  }, [user, role, authLoading, router]);
+    if (authLoading || !user || role !== null) return;
+
+    if (roleFallbackPending) return;
+
+    let cancelled = false;
+
+    setRoleFallbackPending(true);
+
+    const finalLookup = async () => {
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+
+        const {
+          data: { user: currentUser },
+        } = await supabase.auth.getUser();
+
+        if (cancelled) return;
+
+        if (!currentUser || currentUser.id !== user.id) {
+          router.replace("/auth?type=vendor");
+          return;
+        }
+
+        const adminClient = await fetch(
+          "/api/auth/session-role",
+          {
+            method: "POST",
+          }
+        );
+
+        if (cancelled) return;
+
+        if (adminClient.ok) {
+          const data = (await adminClient.json()) as
+            | { role?: string }
+            | { error?: string };
+
+          const resolvedRole =
+            typeof data === "object" && data && "role" in data
+              ? String(data.role)
+              : null;
+
+          if (resolvedRole === "vendor") {
+            return;
+          }
+
+          if (resolvedRole === "buyer") {
+            router.replace("/dashboard/buyer");
+            return;
+          }
+
+          if (
+            resolvedRole === "admin" ||
+            resolvedRole === "sub_admin"
+          ) {
+            router.replace("/dashboard/admin");
+            return;
+          }
+        }
+
+        router.replace("/account");
+      } catch {
+        if (!cancelled) {
+          router.replace("/account");
+        }
+      }
+    };
+
+    finalLookup();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user, role, authLoading, roleFallbackPending, router, supabase]);
 
   /*
    * ------------------------------------------------------------
@@ -704,14 +818,16 @@ export default function VendorOnboardingPage() {
 
   /*
    * ------------------------------------------------------------
-   * Loading
+   * Loading / resolving
    * ------------------------------------------------------------
    */
-  if (authLoading) {
+  if (authLoading || !user || role === null) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="animate-pulse-soft text-brand-navy font-semibold">
-          Loading...
+          {user && role === null
+            ? "Finalizing your vendor account..."
+            : "Loading..."}
         </div>
       </div>
     );

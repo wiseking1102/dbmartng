@@ -51,6 +51,19 @@ export function useAuth() {
   });
 
   /*
+   * Cache of roles already resolved for a user id.
+   *
+   * Auth events fire repeatedly (INITIAL_SESSION, SIGNED_IN,
+   * TOKEN_REFRESHED, USER_UPDATED). Re-resolving the role on every
+   * event momentarily sets loading=true and can transiently clear
+   * the role, which caused pages guarded by `role !== "vendor"`
+   * to bounce the user away mid-flow (the onboarding flicker).
+   *
+   * Roles are resolved once per session and never silently reset.
+   */
+  const roleCacheRef = useRef<Record<string, { role: UserRole }>>({});
+
+  /*
    * Resolve the application role from public.users.
    *
    * The authenticated Supabase user ID is the only identifier
@@ -61,13 +74,24 @@ export function useAuth() {
       const supabase = supabaseRef.current;
 
       /*
+       * A role already resolved earlier in this session is reused
+       * immediately — auth re-emitting events for the same user
+       * must never downgrade or re-query an established role.
+       */
+      const cached = roleCacheRef.current[user.id];
+
+      if (cached) {
+        return cached.role;
+      }
+
+      /*
        * Profile creation and auth-session establishment can happen
        * very close together after signup.
        *
-       * Retry a few times instead of immediately treating a temporary
-       * missing profile as an unknown role.
+       * Retry instead of immediately treating a temporary missing
+       * profile as an unknown role.
        */
-      const delays = [0, 300, 700, 1200];
+      const delays = [0, 500, 1000, 1800, 2800];
 
       for (let attempt = 0; attempt < delays.length; attempt++) {
         if (delays[attempt] > 0) {
@@ -97,6 +121,10 @@ export function useAuth() {
         } | null;
 
         if (!error && isValidRole(profile?.role)) {
+          roleCacheRef.current[user.id] = {
+            role: profile.role,
+          };
+
           return profile.role;
         }
       }
@@ -167,18 +195,41 @@ export function useAuth() {
     /*
      * Keep authentication state synchronized with Supabase.
      *
-     * We intentionally schedule profile resolution outside the
-     * auth-state callback so database work does not block the
-     * Supabase auth event processing.
+     * Rules that prevent the role from flapping:
+     * - The same user re-emitting auth events (INITIAL_SESSION,
+     *   SIGNED_IN, TOKEN_REFRESHED, USER_UPDATED) does NOT re-resolve
+     *   or reset their already-established role.
+     * - Auth events whose user doesn't match the current user are
+     *   ignored rather than clearing local state.
+     * - Only a user transition to null (genuine sign-out) clears the
+     *   authenticated state.
      */
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setTimeout(async () => {
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_OUT") {
+        // Roles may change between sessions (e.g. vendor → admin).
+        // Clear the cache so the next sign-in re-resolves truth.
+        roleCacheRef.current = {};
+
         if (!mounted) return;
 
-        await loadUserState(session?.user ?? null);
-      }, 0);
+        loadUserState(null);
+
+        return;
+      }
+
+      const incomingUser = session?.user ?? null;
+
+      if (!incomingUser) {
+        // Keep the current state — a random no-session event is not
+        // a sign-out when a user is still resolved.
+        return;
+      }
+
+      if (mounted) {
+        loadUserState(incomingUser);
+      }
     });
 
     return () => {
@@ -284,13 +335,17 @@ export function useAuth() {
       /*
        * Ask Supabase for the authoritative authenticated user.
        */
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
 
-      if (!user) {
-        throw new Error("Session not established after sign-in");
-      }
+    if (!user) {
+      throw new Error("Session not established after sign-in");
+    }
+
+    if (roleCacheRef.current[user.id]) {
+      delete roleCacheRef.current[user.id];
+    }
 
       /*
        * Resolve the role with retries.
@@ -481,6 +536,12 @@ export function useAuth() {
     const supabase = supabaseRef.current;
 
     await supabase.auth.signOut();
+
+    /*
+     * Roles may legitimately change between sessions — the cache
+     * must never survive a sign-out.
+     */
+    roleCacheRef.current = {};
 
     setState({
       user: null,
