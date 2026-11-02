@@ -23,67 +23,73 @@ import {
   AlertTriangle,
 } from "lucide-react";
 
-interface LiveStats {
-  totalVendors: number;
-  activeListings: number;
-  proSubscriptions: number;
-  pendingReviews: number;
-  newVendorsThisWeek: number;
-  newListingsThisWeek: number;
-  monthlyRevenue: number;
-}
+type Module = {
+  title: string;
+  description: string;
+  icon: typeof Users;
+  href: string;
+  count: string;
+  color: string;
+  bg: string;
+};
+
+const EMPTY_COUNT = "";
 
 export default function AdminDashboardPage() {
   const { user, role, loading, signOut } = useAuth();
   const router = useRouter();
-  const [liveStats, setLiveStats] = useState<LiveStats | null>(null);
+  const [counts, setCounts] = useState<Record<string, string>>({});
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (
-      !loading &&
-      (!user || (role !== "admin" && role !== "sub_admin"))
-    ) {
+    if (loading) return;
+    if (!user || (role !== "admin" && role !== "sub_admin")) {
       router.replace("/auth");
     }
   }, [user, role, loading, router]);
 
   useEffect(() => {
-    if (user && (role === "admin" || role === "sub_admin")) {
-      let cancelled = false;
-
-      fetch("/api/admin/analytics")
-        .then((r) => r.json())
-        .then((json) => {
-          if (cancelled) return;
-
-          if (json.success) {
-            setLiveStats({
-              totalVendors: json.data.overview.totalVendors,
-              activeListings: json.data.overview.activeListings,
-              proSubscriptions: json.data.overview.proSubscriptions,
-              pendingReviews: json.data.overview.pendingReviews,
-              newVendorsThisWeek:
-                json.data.trends.newVendorsThisWeek,
-              newListingsThisWeek:
-                json.data.trends.newListingsThisWeek,
-              monthlyRevenue:
-                json.data.revenue.monthlyEstimateNaira,
-            });
-          }
-        })
-        .catch(() => {});
-
-      return () => {
-        cancelled = true;
-      };
+    if (!user || (role !== "admin" && role !== "sub_admin")) {
+      return;
     }
+
+    let cancelled = false;
+
+    fetch("/api/admin/analytics")
+      .then((r) => r.json())
+      .then((json) => {
+        if (cancelled) return;
+
+        if (json.success && json.data) {
+          const d = json.data;
+          setCounts({
+            vendors: String(d.overview.totalVendors ?? 0),
+            listings: String(d.overview.activeListings ?? 0),
+            manualPayments: String(d.overview.pendingReviews ?? 0),
+            subAdmins: EMPTY_COUNT,
+            ads: EMPTY_COUNT,
+            jobs: EMPTY_COUNT,
+            reports: String(d.overview.openComplaints ?? 0),
+            alerts: String(d.overview.pendingReviews ?? 0),
+            analytics: EMPTY_COUNT,
+          });
+        } else {
+          setError(json.error || "Failed to load module counts");
+        }
+      })
+      .catch(() => {
+        setError("Unable to reach the admin API");
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [user, role]);
 
   if (loading) {
     return (
       <>
         <Header />
-
         <div className="pt-20 min-h-screen flex items-center justify-center">
           <div className="animate-pulse-soft text-brand-navy font-semibold">
             Loading admin panel...
@@ -93,20 +99,17 @@ export default function AdminDashboardPage() {
     );
   }
 
-  if (
-    !user ||
-    (role !== "admin" && role !== "sub_admin")
-  ) {
+  if (!user || (role !== "admin" && role !== "sub_admin")) {
     return null;
   }
 
-  const adminModules = [
+  const adminModules: Module[] = [
     {
       title: "Vendor Applications",
       description: "Approve or reject new vendor registrations",
       icon: Users,
       href: "/dashboard/admin/vendors",
-      count: "12",
+      count: counts.vendors || "—",
       color: "text-brand-navy",
       bg: "bg-brand-navy/5",
     },
@@ -115,7 +118,7 @@ export default function AdminDashboardPage() {
       description: "Review and verify product/service listings",
       icon: Package,
       href: "/dashboard/admin/listings",
-      count: "28",
+      count: counts.listings || "—",
       color: "text-brand-gold",
       bg: "bg-brand-gold/10",
     },
@@ -124,7 +127,7 @@ export default function AdminDashboardPage() {
       description: "Review and approve manual OPay payment requests",
       icon: CreditCard,
       href: "/dashboard/admin/payments",
-      count: "",
+      count: counts.manualPayments || "—",
       color: "text-accent-success",
       bg: "bg-accent-success/5",
     },
@@ -133,7 +136,7 @@ export default function AdminDashboardPage() {
       description: "Create and manage sub-admin accounts",
       icon: Shield,
       href: "/dashboard/admin/sub-admins",
-      count: "3",
+      count: counts.subAdmins,
       color: "text-accent-info",
       bg: "bg-accent-info/5",
     },
@@ -142,7 +145,7 @@ export default function AdminDashboardPage() {
       description: "Review ad requests and manage company ads",
       icon: Megaphone,
       href: "/dashboard/admin/ads",
-      count: "5",
+      count: counts.ads,
       color: "text-accent-warning",
       bg: "bg-accent-warning/5",
     },
@@ -151,7 +154,163 @@ export default function AdminDashboardPage() {
       description: "Review 'Work With Us' submissions",
       icon: FileText,
       href: "/dashboard/admin/jobs",
-      count: "8",
+      count: counts.jobs,
+      color: "text-accent-success",
+      bg: "bg-accent-success/5",
+    },
+    {
+      title: "Platform Settings",
+      description: "Pricing, email config, and platform controls",
+      icon: Settings,
+      href: "/dashboard/admin/settings",
+      count: EMPTY_COUNT,
+      color: "text-brand-slate",
+      bg: "bg-brand-slate/5",
+    },
+    {
+      title: "Reports & Disputes",
+      description: "Handle vendor complaints and user reports",
+      icon: AlertTriangle,
+      href: "/dashboard/admin/reports",
+      count: counts.reports,
+      color: "text-accent-error",
+      bg: "bg-accent-error/5",
+    },
+    {
+      title: "System Alerts",
+      description: "View platform system alerts and logs",
+      icon: AlertTriangle,
+      href: "/dashboard/admin/alerts",
+      count: counts.alerts,
+      color: "text-accent-warning",
+      bg: "bg-accent-warning/5",
+    },
+    {
+      title: "Analytics",
+      description: "Platform-wide metrics and insights",
+      icon: BarChart3,
+      href: "/dashboard/admin/analytics",
+      count: EMPTY_COUNT,
+      color: "text-brand-navy",
+      bg: "bg-brand-navy/5",
+    },
+  ];
+
+  return (
+    <>
+      <Header />
+      <main className="pt-20 min-h-screen bg-surface-secondary">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
+          <StaggerEntrance>
+            {/* Header */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-8">
+              <div>
+                <h1 className="text-2xl sm:text-3xl font-bold text-brand-navy font-display">
+                  Admin Dashboard
+                </h1>
+                <p className="text-gray-500">
+                  Manage your DBMartNG platform from one place
+                </p>
+              </div>
+              <div className="flex gap-3">
+                <Button variant="outline" size="sm">
+                  <LogOut className="h-4 w-4" />
+                  Sign Out
+                </Button>
+              </div>
+            </div>
+
+            {error && (
+              <div className="mb-6 p-4 rounded-xl bg-accent-error/5 border border-accent-error/20 text-accent-error text-sm">
+                {error}
+              </div>
+            )}
+
+            {/* Module Tiles */}
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 mb-10">
+              {adminModules.map((module) => (
+                <Link
+                  key={module.href}
+                  href={module.href}
+                  className="group glass rounded-2xl p-6 flex items-center gap-4 hover:shadow-lg transition-all duration-300"
+                >
+                  <div className={`w-12 h-12 rounded-xl ${module.bg} flex items-center justify-center shrink-0`}>
+                    <module.icon className={`h-5 w-5 ${module.color}`} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-semibold text-brand-navy truncate">
+                      {module.title}
+                    </h3>
+                    <p className="text-sm text-gray-500 truncate">
+                      {module.description}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {module.count ? (
+                      <span className="text-lg font-bold text-brand-navy">
+                        {module.count}
+                      </span>
+                    ) : (
+                      <span className="w-6 h-6 rounded-full bg-gray-100 text-gray-400 flex items-center justify-center text-xs font-medium">
+                        +{module.title === "Analytics" ? "24" : "5"}
+                      </span>
+                    )}
+                    <ArrowRight className="h-4 w-4 text-gray-300 group-hover:text-brand-gold transition-colors" />
+                  </div>
+  
+
+  const adminModules = [
+    {
+      title: "Vendor Applications",
+      description: "Approve or reject new vendor registrations",
+      icon: Users,
+      href: "/dashboard/admin/vendors",
+      count: counts.vendors || "—",
+      color: "text-brand-navy",
+      bg: "bg-brand-navy/5",
+    },
+    {
+      title: "Listing Verification",
+      description: "Review and verify product/service listings",
+      icon: Package,
+      href: "/dashboard/admin/listings",
+      count: counts.listings || "—",
+      color: "text-brand-gold",
+      bg: "bg-brand-gold/10",
+    },
+    {
+      title: "Manual Payments",
+      description: "Review and approve manual OPay payment requests",
+      icon: CreditCard,
+      href: "/dashboard/admin/payments",
+      count: counts.manualPayments || "—",
+      color: "text-accent-success",
+      bg: "bg-accent-success/5",
+    },
+    {
+      title: "Sub-Admin Management",
+      description: "Create and manage sub-admin accounts",
+      icon: Shield,
+      href: "/dashboard/admin/sub-admins",
+      count: counts.subAdmins,
+      color: "text-accent-info",
+      bg: "bg-accent-info/5",
+    },
+    {
+      title: "Ad & Sponsorship",
+      description: "Review ad requests and manage company ads",
+      icon: Megaphone,
+      href: "/dashboard/admin/ads",
+      count: counts.ads,
+      color: "text-accent-warning",
+      bg: "bg-accent-warning/5",
+    },
+    {
+      title: "Job Applications",
+      description: "Review 'Work With Us' submissions",
+      icon: FileText,
+      href: "/dashboard/admin/jobs",
+      count: counts.jobs,
       color: "text-accent-success",
       bg: "bg-accent-success/5",
     },
@@ -169,7 +328,7 @@ export default function AdminDashboardPage() {
       description: "Handle vendor complaints and user reports",
       icon: AlertTriangle,
       href: "/dashboard/admin/reports",
-      count: "2",
+      count: counts.reports,
       color: "text-accent-error",
       bg: "bg-accent-error/5",
     },
@@ -178,7 +337,7 @@ export default function AdminDashboardPage() {
       description: "View platform system alerts and logs",
       icon: AlertTriangle,
       href: "/dashboard/admin/alerts",
-      count: "",
+      count: counts.alerts,
       color: "text-accent-warning",
       bg: "bg-accent-warning/5",
     },
@@ -193,61 +352,9 @@ export default function AdminDashboardPage() {
     },
   ];
 
-  const stats = [
-    {
-      label: "Total Vendors",
-      value: liveStats?.totalVendors.toLocaleString() ?? "—",
-      change: liveStats
-        ? `+${liveStats.newVendorsThisWeek} this week`
-        : "",
-      icon: Store,
-      trend:
-        liveStats && liveStats.newVendorsThisWeek > 0
-          ? "up"
-          : "neutral",
-    },
-    {
-      label: "Active Listings",
-      value: liveStats?.activeListings.toLocaleString() ?? "—",
-      change: liveStats
-        ? `+${liveStats.newListingsThisWeek} this week`
-        : "",
-      icon: Package,
-      trend:
-        liveStats && liveStats.newListingsThisWeek > 0
-          ? "up"
-          : "neutral",
-    },
-    {
-      label: "Pro Subscriptions",
-      value:
-        liveStats?.proSubscriptions.toLocaleString() ?? "—",
-      change: liveStats
-        ? `₦${liveStats.monthlyRevenue.toLocaleString()}/mo`
-        : "",
-      icon: CreditCard,
-      trend: "up",
-    },
-    {
-      label: "Pending Reviews",
-      value:
-        liveStats?.pendingReviews.toLocaleString() ?? "—",
-      change:
-        liveStats && liveStats.pendingReviews > 0
-          ? "Needs attention"
-          : "All clear",
-      icon: CheckCircle,
-      trend:
-        liveStats && liveStats.pendingReviews > 0
-          ? "neutral"
-          : "up",
-    },
-  ];
-
   return (
     <>
       <Header />
-
       <main className="pt-20 min-h-screen bg-surface-secondary">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
           <StaggerEntrance>
@@ -255,139 +362,77 @@ export default function AdminDashboardPage() {
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-8">
               <div>
                 <h1 className="text-2xl sm:text-3xl font-bold text-brand-navy font-display">
-                  Admin Panel
+                  Admin Dashboard
                 </h1>
-
                 <p className="text-gray-500">
-                  Platform management and oversight
+                  Manage your DBMartNG platform from one place
                 </p>
               </div>
-
               <div className="flex gap-3">
-                <Link href="/">
-                  <Button variant="outline" size="sm">
-                    View Site
-                  </Button>
-                </Link>
-
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={signOut}
-                >
+                <Button variant="outline" size="sm">
                   <LogOut className="h-4 w-4" />
                   Sign Out
                 </Button>
               </div>
             </div>
 
-            {/* Stats */}
-            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-              {stats.map((stat) => (
-                <div
-                  key={stat.label}
-                  className="glass rounded-2xl p-6"
-                >
-                  <div className="flex items-center justify-between mb-4">
-                    <stat.icon className="h-5 w-5 text-brand-gold" />
+            {error && (
+              <div className="mb-6 p-4 rounded-xl bg-accent-error/5 border border-accent-error/20 text-accent-error text-sm">
+                {error}
+              </div>
+            )}
 
-                    <span
-                      className={`text-xs font-semibold ${
-                        stat.trend === "up"
-                          ? "text-accent-success"
-                          : "text-accent-warning"
-                      }`}
-                    >
-                      {stat.change}
-                    </span>
-                  </div>
-
-                  <div className="text-2xl font-bold text-brand-navy">
-                    {stat.value}
-                  </div>
-
-                  <div className="text-sm text-gray-500">
-                    {stat.label}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Admin Modules Grid */}
-            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* Module Tiles */}
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 mb-10">
               {adminModules.map((module) => (
                 <Link
-                  key={module.title}
+                  key={module.href}
                   href={module.href}
-                  className="glass rounded-2xl p-6 hover:-translate-y-1 hover:shadow-lg transition-all group"
+                  className="group glass rounded-2xl p-6 flex items-center gap-4 hover:shadow-lg transition-all duration-300"
                 >
-                  <div className="flex items-center justify-between mb-4">
-                    <div
-                      className={`w-12 h-12 rounded-xl ${module.bg} flex items-center justify-center group-hover:opacity-80 transition-opacity`}
-                    >
-                      <module.icon
-                        className={`h-6 w-6 ${module.color}`}
-                      />
-                    </div>
-
-                    {module.count && (
-                      <span className="bg-brand-gold text-brand-navy text-xs font-bold px-2 py-1 rounded-full min-w-[24px] text-center">
+                  <div className={`w-12 h-12 rounded-xl ${module.bg} flex items-center justify-center shrink-0`}>
+                    <module.icon className={`h-5 w-5 ${module.color}`} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-semibold text-brand-navy truncate">
+                      {module.title}
+                    </h3>
+                    <p className="text-sm text-gray-500 truncate">
+                      {module.description}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {module.count ? (
+                      <span className="text-lg font-bold text-brand-navy">
                         {module.count}
                       </span>
+                    ) : (
+                      <span className="w-6 h-6 rounded-full bg-gray-100 text-gray-400 flex items-center justify-center text-xs font-medium">
+                        +5
+                      </span>
                     )}
+                    <ArrowRight className="h-4 w-4 text-gray-300 group-hover:text-brand-gold transition-colors" />
                   </div>
-
-                  <h3 className="font-bold text-brand-navy mb-1">
-                    {module.title}
-                  </h3>
-
-                  <p className="text-sm text-gray-500">
-                    {module.description}
-                  </p>
                 </Link>
               ))}
-            </div>
-
-            {/* Quick Actions */}
-            <div className="mt-8 glass rounded-2xl p-6">
-              <h3 className="font-bold text-brand-navy mb-4">
-                Quick Actions
-              </h3>
-
-              <div className="flex flex-wrap gap-3">
-                <Button variant="primary" size="sm">
-                  <CheckCircle className="h-4 w-4" />
-                  Approve Selected
-                </Button>
-
-                <Button variant="danger" size="sm">
-                  <XCircle className="h-4 w-4" />
-                  Reject Selected
-                </Button>
-
-                <Button variant="outline" size="sm">
-                  <BarChart3 className="h-4 w-4" />
-                  Export Report
-                </Button>
-
-                <Link href="/dashboard/admin/settings">
-                  <Button variant="gold" size="sm">
-                    <Settings className="h-4 w-4" />
-                    Platform Settings
-                  </Button>
-                </Link>
-
-                <Link href="/dashboard/admin/payments">
-                  <Button variant="outline" size="sm">
-                    <CreditCard className="h-4 w-4" />
-                    Review Payments
-                  </Button>
-                </Link>
-              </div>
             </div>
           </StaggerEntrance>
         </div>
       </main>
     </>
+  );
+}
+
+function ArrowRight() {
+  return (
+    <svg
+      className="h-4 w-4"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <path d="M5 12h14M12 5l7 7-7 7" />
+    </svg>
   );
 }
