@@ -23,6 +23,7 @@ import {
 import { formatNaira } from "@/lib/utils";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ProductJsonLd, BreadcrumbListJsonLd } from "@/components/seo/JsonLd";
+import { ContactClickLink } from "@/components/engagement/ContactClickLink";
 
 interface Props {
   params: Promise<{ slug: string }>;
@@ -91,12 +92,12 @@ export default async function ListingDetailPage({ params }: Props) {
   const listing = rawListing;
   const vendor = listing.vendor_profiles;
 
-  // Increment view count asynchronously
+  // Increment view count through the trusted RPC (rate-limited,
+  // no browser-writable counters).
   try {
-    await (adminClient
-      .from("listings")
-      .update({ view_count: (listing.view_count || 0) + 1 } as never)
-      .eq("id", listing.id) as never);
+    await adminClient.rpc("record_listing_view", {
+      p_listing_id: listing.id,
+    });
   } catch (err) {
     // Non-blocking view increment
   }
@@ -329,21 +330,31 @@ export default async function ListingDetailPage({ params }: Props) {
                 {/* Contact CTA Buttons */}
                 <div className="space-y-3 pt-2">
                   {waUrl && (
-                    <a href={waUrl} target="_blank" rel="noopener noreferrer" className="block">
+                    <ContactClickLink
+                      listingId={listing.id}
+                      href={waUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block"
+                    >
                       <Button variant="gold" size="lg" className="w-full">
                         <MessageSquare className="h-5 w-5" />
                         Chat on WhatsApp
                       </Button>
-                    </a>
+                    </ContactClickLink>
                   )}
 
                   {vendor?.phone && (
-                    <a href={`tel:${vendor.phone}`} className="block">
+                    <ContactClickLink
+                      listingId={listing.id}
+                      href={`tel:${vendor.phone}`}
+                      className="block"
+                    >
                       <Button variant="outline" size="lg" className="w-full border-brand-navy text-brand-navy">
                         <Phone className="h-5 w-5" />
                         Call {vendor.phone}
                       </Button>
-                    </a>
+                    </ContactClickLink>
                   )}
 
                   <Link href={`/vendors/${vendor?.slug || ""}`} className="block">
